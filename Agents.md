@@ -1,5 +1,6 @@
 - Use Simplified Chinese forever to reply
 - In case you are unsure about some code framework, use the context7 mcp service to get the latest information.
+- When modifications to the extension's interface or display-related aspects are required, always use the Professional style.
 
 <skills_system priority="1">
 
@@ -10,7 +11,7 @@
 When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge.
 
 How to use skills:
-- Invoke: Bash("openskills read <skill-name>")
+- Invoke: openskills read <skill-name>
 - The skill content will load with detailed instructions on how to complete the task
 - Base directory provided in output for resolving bundled resources (references/, scripts/, assets/)
 

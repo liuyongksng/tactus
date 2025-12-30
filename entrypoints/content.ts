@@ -1,5 +1,6 @@
 import { createApp } from 'vue';
 import FloatingButton from '../components/FloatingButton.vue';
+import SideFloatingBall from '../components/SideFloatingBall.vue';
 
 export default defineContentScript({
   matches: ['<all_urls>'],
@@ -7,7 +8,28 @@ export default defineContentScript({
 
   async main(ctx) {
     let floatingUI: any = null;
+    let sideFloatingBallUI: any = null;
     let selectedText = '';
+
+    // 创建右侧悬浮球 - 使用 overlay 定位
+    sideFloatingBallUI = await createShadowRootUi(ctx, {
+      name: 'side-floating-ball',
+      position: 'overlay',
+      anchor: 'body',
+      onMount: (container) => {
+        const app = createApp(SideFloatingBall, {
+          onClick: () => {
+            browser.runtime.sendMessage({ type: 'OPEN_SIDEPANEL' });
+          },
+        });
+        app.mount(container);
+        return app;
+      },
+      onRemove: (app) => {
+        app?.unmount();
+      },
+    });
+    sideFloatingBallUI.mount();
 
     // Listen for text selection
     document.addEventListener('mouseup', async (e) => {
