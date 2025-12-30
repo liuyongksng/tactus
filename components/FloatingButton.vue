@@ -1,59 +1,61 @@
 <script setup lang="ts">
+import { ref } from 'vue';
+
 const props = defineProps<{
   x: number;
   y: number;
+  iconUrl: string;
   onAsk: () => void;
 }>();
+
+const visible = ref(true);
+
+const handleClick = () => {
+  visible.value = false;
+  props.onAsk();
+};
 </script>
 
 <template>
   <div
+    v-if="visible"
     class="tc-floating-btn"
-    :style="{ left: `${props.x + 10}px`, top: `${props.y - 40}px` }"
-    @click="props.onAsk"
+    :style="{ left: `${props.x}px`, top: `${props.y + 4}px` }"
+    @click.stop="handleClick"
   >
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-    </svg>
-    <span>Ask AI</span>
+    <img :src="props.iconUrl" alt="Ask AI" width="24" height="24" />
   </div>
 </template>
 
 <style scoped>
 .tc-floating-btn {
-  position: absolute;
+  position: fixed;
   z-index: 2147483647;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  background: #FAFAF8;
-  color: #1A1A1A;
-  border: 1px solid #1A1A1A;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  font-family: "Source Sans 3", -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  letter-spacing: 0.02em;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: #ffffff;
+  border: none;
+  border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(26, 26, 26, 0.08);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   transition: all 200ms ease-out;
   user-select: none;
 }
 
 .tc-floating-btn:hover {
-  background: #F5F3F0;
-  border-color: #B8860B;
-  color: #B8860B;
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(26, 26, 26, 0.12);
+  transform: scale(1.1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 .tc-floating-btn:active {
-  transform: translateY(0);
+  transform: scale(0.95);
 }
 
-.tc-floating-btn svg {
+.tc-floating-btn img {
   flex-shrink: 0;
+  pointer-events: none;
 }
 </style>

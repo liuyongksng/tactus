@@ -2,6 +2,38 @@ import { createApp } from 'vue';
 import FloatingButton from '../components/FloatingButton.vue';
 import SideFloatingBall from '../components/SideFloatingBall.vue';
 
+// 获取选区末尾的精确位置（视口坐标，用于 fixed 定位）
+function getSelectionEndPosition(): { x: number; y: number } | null {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) return null;
+
+  const range = selection.getRangeAt(0);
+  
+  // 创建一个折叠到末尾的 range 来获取光标位置
+  const endRange = range.cloneRange();
+  endRange.collapse(false); // false = 折叠到末尾
+  
+  const rects = endRange.getClientRects();
+  if (rects.length > 0) {
+    const lastRect = rects[rects.length - 1];
+    return {
+      x: lastRect.right,  // 视口坐标，不加 scrollX
+      y: lastRect.bottom, // 视口坐标，不加 scrollY
+    };
+  }
+  
+  // 备用方案：使用整个选区的边界
+  const boundingRect = range.getBoundingClientRect();
+  if (boundingRect.width > 0 || boundingRect.height > 0) {
+    return {
+      x: boundingRect.right,
+      y: boundingRect.bottom,
+    };
+  }
+  
+  return null;
+}
+
 export default defineContentScript({
   matches: ['<all_urls>'],
   cssInjectionMode: 'ui',
@@ -10,6 +42,9 @@ export default defineContentScript({
     let floatingUI: any = null;
     let sideFloatingBallUI: any = null;
     let selectedText = '';
+    
+    // 预先获取图标 URL
+    const iconUrl = browser.runtime.getURL('/icon/32.png');
 
     // 创建右侧悬浮球 - 使用 overlay 定位
     sideFloatingBallUI = await createShadowRootUi(ctx, {
@@ -33,6 +68,9 @@ export default defineContentScript({
 
     // Listen for text selection
     document.addEventListener('mouseup', async (e) => {
+      // 延迟一点确保选区已经完成
+      await new Promise(resolve => setTimeout(resolve, 10));
+      
       const selection = window.getSelection();
       const text = selection?.toString().trim();
 
@@ -45,21 +83,33 @@ export default defineContentScript({
       if (text && text.length > 0) {
         selectedText = text;
         
-        // Create floating button near selection
-        floatingUI = await createIntegratedUi(ctx, {
-          position: 'inline',
+        // 获取选区末尾位置
+        const position = getSelectionEndPosition();
+        if (!position) return;
+        
+        // 使用 overlay 定位创建浮动按钮，更可靠
+        floatingUI = await createShadowRootUi(ctx, {
+          name: 'tc-floating-button',
+          position: 'overlay',
           anchor: 'body',
           onMount: (container) => {
+            const removeFloating = () => {
+              if (floatingUI) {
+                floatingUI.remove();
+                floatingUI = null;
+              }
+            };
+            
             const app = createApp(FloatingButton, {
-              x: e.pageX,
-              y: e.pageY,
+              x: position.x,
+              y: position.y,
+              iconUrl: iconUrl,
               onAsk: () => {
+                // 先移除悬浮按钮
+                removeFloating();
+                // 再发送消息
                 browser.runtime.sendMessage({ type: 'SET_QUOTE', quote: selectedText });
                 browser.runtime.sendMessage({ type: 'OPEN_SIDEPANEL' });
-                if (floatingUI) {
-                  floatingUI.remove();
-                  floatingUI = null;
-                }
               },
             });
             app.mount(container);
@@ -76,7 +126,12 @@ export default defineContentScript({
 
     // Hide floating button when clicking elsewhere
     document.addEventListener('mousedown', (e) => {
-      if (floatingUI && !(e.target as Element).closest('.tc-floating-btn')) {
+      // 检查点击是否在 shadow root 内的按钮上
+      const target = e.target as Element;
+      const isFloatingButton = target.closest('tc-floating-button') || 
+                               target.shadowRoot?.querySelector('.tc-floating-btn');
+      
+      if (floatingUI && !isFloatingButton) {
         floatingUI.remove();
         floatingUI = null;
       }
