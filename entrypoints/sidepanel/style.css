@@ -72,6 +72,32 @@ body {
   letter-spacing: -0.01em;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 200ms ease-out;
+}
+
+.icon-btn:hover {
+  background: var(--muted);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .settings-btn {
   background: transparent;
   border: 1px solid var(--foreground);
@@ -142,6 +168,15 @@ body {
   font-size: 14px;
   line-height: 1.75;
   word-wrap: break-word;
+  position: relative;
+}
+
+.message-time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  margin-bottom: 6px;
+  letter-spacing: 0.05em;
 }
 
 .message.user {
@@ -151,6 +186,10 @@ body {
   border: 1px solid var(--border);
   border-radius: 12px 12px 4px 12px;
   box-shadow: var(--shadow-sm);
+}
+
+.message.user .message-time {
+  text-align: right;
 }
 
 .message.assistant {
@@ -506,6 +545,97 @@ body {
   margin-bottom: 8px;
 }
 
+.empty-state .empty-hint {
+  font-size: 12px;
+  margin-top: 12px;
+  color: var(--muted-foreground);
+}
+
+.empty-history {
+  text-align: center;
+  padding: 32px 24px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+
+/* Session list */
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 200ms ease-out;
+}
+
+.session-item:hover {
+  border-color: var(--border-hover);
+  background: var(--card);
+}
+
+.session-item.active {
+  background: var(--card);
+  border-color: var(--accent);
+  border-left: 3px solid var(--accent);
+}
+
+.session-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--foreground);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-meta {
+  display: flex;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+  letter-spacing: 0.02em;
+}
+
+.delete-session-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 200ms ease-out;
+  opacity: 0;
+}
+
+.session-item:hover .delete-session-btn {
+  opacity: 1;
+}
+
+.delete-session-btn:hover {
+  background: #FFF5F5;
+  color: #C53030;
+}
+
 /* Loading */
 .loading {
   display: flex;
@@ -591,4 +721,195 @@ body {
 .modal::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 3px;
+}
+
+
+/* Markdown Content Styles */
+.markdown-content {
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--foreground);
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  color: var(--foreground);
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+  line-height: 1.3;
+}
+
+.markdown-content h1:first-child,
+.markdown-content h2:first-child,
+.markdown-content h3:first-child {
+  margin-top: 0;
+}
+
+.markdown-content h1 { font-size: 1.5em; }
+.markdown-content h2 { font-size: 1.25em; }
+.markdown-content h3 { font-size: 1.1em; }
+.markdown-content h4 { font-size: 1em; }
+
+.markdown-content p {
+  margin: 0.75em 0;
+}
+
+.markdown-content p:first-child {
+  margin-top: 0;
+}
+
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content strong {
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.markdown-content em {
+  font-style: italic;
+}
+
+.markdown-content a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 200ms ease-out;
+}
+
+.markdown-content a:hover {
+  border-bottom-color: var(--accent);
+}
+
+/* Inline code */
+.markdown-content code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--muted);
+  color: var(--foreground);
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+/* Code blocks */
+.markdown-content pre {
+  background: #1A1A1A;
+  color: #E8E4DF;
+  padding: 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 1em 0;
+  border: 1px solid var(--border);
+}
+
+.markdown-content pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  font-size: 0.85em;
+  line-height: 1.6;
+}
+
+/* Lists */
+.markdown-content ul,
+.markdown-content ol {
+  margin: 0.75em 0;
+  padding-left: 1.5em;
+}
+
+.markdown-content li {
+  margin: 0.35em 0;
+}
+
+.markdown-content li > ul,
+.markdown-content li > ol {
+  margin: 0.25em 0;
+}
+
+.markdown-content ul {
+  list-style-type: disc;
+}
+
+.markdown-content ul ul {
+  list-style-type: circle;
+}
+
+.markdown-content ol {
+  list-style-type: decimal;
+}
+
+/* Blockquotes */
+.markdown-content blockquote {
+  margin: 1em 0;
+  padding: 0.75em 1em;
+  border-left: 3px solid var(--accent);
+  background: var(--muted);
+  border-radius: 0 6px 6px 0;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+.markdown-content blockquote p {
+  margin: 0;
+}
+
+/* Tables */
+.markdown-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+  font-size: 0.9em;
+}
+
+.markdown-content th,
+.markdown-content td {
+  padding: 10px 12px;
+  text-align: left;
+  border: 1px solid var(--border);
+}
+
+.markdown-content th {
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.markdown-content tr:nth-child(even) {
+  background: rgba(245, 243, 240, 0.5);
+}
+
+/* Horizontal rule */
+.markdown-content hr {
+  border: none;
+  height: 1px;
+  background: var(--border);
+  margin: 1.5em 0;
+}
+
+/* Images */
+.markdown-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  margin: 0.75em 0;
+}
+
+/* Task lists */
+.markdown-content input[type="checkbox"] {
+  margin-right: 0.5em;
+  accent-color: var(--accent);
 }

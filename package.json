@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@wxt-dev/storage": "^1.2.6",
+    "marked": "^17.0.1",
     "vue": "^3.5.25"
   },
   "devDependencies": {

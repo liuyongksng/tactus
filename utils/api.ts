@@ -35,9 +35,17 @@ export async function* streamChat(
   messages: ChatMessage[],
   pageContent?: string
 ): AsyncGenerator<string, void, unknown> {
+  const basePrompt = `You are a helpful AI assistant. Always respond using Markdown format for better readability. Use:
+- Headers (##, ###) for sections
+- **bold** and *italic* for emphasis
+- \`code\` for inline code and \`\`\` for code blocks with language specification
+- Lists (- or 1.) for enumerations
+- > for quotes
+- Tables when presenting structured data`;
+
   const systemMessage = pageContent
-    ? `You are a helpful AI assistant. The user is viewing a webpage with the following content:\n\n${pageContent}\n\nAnswer questions based on this context when relevant.`
-    : 'You are a helpful AI assistant.';
+    ? `${basePrompt}\n\nThe user is viewing a webpage with the following content:\n\n${pageContent}\n\nAnswer questions based on this context when relevant.`
+    : basePrompt;
 
   const apiMessages = [
     { role: 'system', content: systemMessage },

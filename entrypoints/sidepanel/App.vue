@@ -1,16 +1,37 @@
 <script setup lang="ts">
-import { ref, onMounted, nextTick, watch } from 'vue';
+import { ref, onMounted, nextTick, watch, computed } from 'vue';
+import { marked } from 'marked';
 import {
   providersStorage,
   activeProviderIdStorage,
   sharePageContentStorage,
+  currentSessionIdStorage,
   getActiveProvider,
   saveProvider,
   deleteProvider,
+  getAllSessions,
+  getSession,
+  createSession,
+  updateSession,
+  deleteSession,
+  generateSessionTitle,
   type AIProvider,
   type ChatMessage,
+  type ChatSession,
 } from '../../utils/storage';
 import { fetchModels, streamChat } from '../../utils/api';
+
+// Configure marked for safe rendering
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+});
+
+// Render markdown to HTML
+function renderMarkdown(content: string): string {
+  if (!content) return '';
+  return marked.parse(content) as string;
+}
 
 // State
 const messages = ref<ChatMessage[]>([]);
@@ -19,7 +40,12 @@ const sharePageContent = ref(false);
 const pendingQuote = ref<string | null>(null);
 const isLoading = ref(false);
 const showSettings = ref(false);
+const showHistory = ref(false);
 const chatAreaRef = ref<HTMLElement | null>(null);
+
+// Session state
+const currentSession = ref<ChatSession | null>(null);
+const sessions = ref<ChatSession[]>([]);
 
 // Settings state
 const providers = ref<AIProvider[]>([]);
@@ -35,11 +61,41 @@ const formApiKey = ref('');
 const formModel = ref('');
 const formCustomModel = ref('');
 
+// Format timestamp
+function formatTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+  
+  if (isToday) {
+    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  }
+  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function formatSessionDate(timestamp: number): string {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = date.toDateString() === yesterday.toDateString();
+  
+  if (isToday) return '今天';
+  if (isYesterday) return '昨天';
+  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+}
+
 // Initialize
 onMounted(async () => {
   providers.value = await providersStorage.getValue();
   activeProviderId.value = await activeProviderIdStorage.getValue();
   sharePageContent.value = await sharePageContentStorage.getValue();
+  sessions.value = await getAllSessions();
+  
+  // 每次打开侧边栏都是新对话状态（但不立即创建 session，等发送消息时再创建）
+  currentSession.value = null;
+  messages.value = [];
 
   // Check for pending quote from content script
   const result = await browser.storage.local.get('pendingQuote');
@@ -99,6 +155,18 @@ async function getPageContent(): Promise<string | undefined> {
   }
 }
 
+// Save current session
+async function saveCurrentSession() {
+  if (!currentSession.value) return;
+  // 使用 JSON 深拷贝确保 messages 是纯数据
+  const sessionToSave: ChatSession = {
+    ...currentSession.value,
+    messages: JSON.parse(JSON.stringify(messages.value)),
+  };
+  await updateSession(sessionToSave);
+  sessions.value = await getAllSessions();
+}
+
 // Send message
 async function sendMessage() {
   const text = inputText.value.trim();
@@ -106,9 +174,15 @@ async function sendMessage() {
 
   const provider = await getActiveProvider();
   if (!provider) {
-    alert('Please configure an AI provider first');
+    alert('请先配置 AI 服务商');
     showSettings.value = true;
     return;
+  }
+
+  // Create session if not exists
+  if (!currentSession.value) {
+    currentSession.value = await createSession(activeProviderId.value || undefined);
+    sessions.value = await getAllSessions();
   }
 
   const userMessage: ChatMessage = {
@@ -122,6 +196,11 @@ async function sendMessage() {
   inputText.value = '';
   pendingQuote.value = null;
   scrollToBottom();
+
+  // Update session title if first message
+  if (messages.value.length === 1) {
+    currentSession.value.title = await generateSessionTitle(text);
+  }
 
   isLoading.value = true;
 
@@ -139,15 +218,19 @@ async function sendMessage() {
       assistantMessage.content += chunk;
       scrollToBottom();
     }
+    
+    // Update assistant message timestamp after completion
+    assistantMessage.timestamp = Date.now();
   } catch (error: any) {
     messages.value.push({
       role: 'assistant',
-      content: `Error: ${error.message}`,
+      content: `错误: ${error.message}`,
       timestamp: Date.now(),
     });
   } finally {
     isLoading.value = false;
     scrollToBottom();
+    await saveCurrentSession();
   }
 }
 
@@ -156,6 +239,40 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendMessage();
+  }
+}
+
+// New chat
+async function newChat() {
+  // 只重置状态，不立即创建 session，等发送消息时再创建
+  currentSession.value = null;
+  messages.value = [];
+  showHistory.value = false;
+}
+
+// Load session
+async function loadSession(session: ChatSession) {
+  currentSession.value = session;
+  messages.value = session.messages;
+  await currentSessionIdStorage.setValue(session.id);
+  showHistory.value = false;
+  scrollToBottom();
+}
+
+// Delete session
+async function removeSession(id: string, e: Event) {
+  e.stopPropagation();
+  if (confirm('确定删除这个对话吗？')) {
+    await deleteSession(id);
+    sessions.value = await getAllSessions();
+    if (currentSession.value?.id === id) {
+      if (sessions.value.length > 0) {
+        await loadSession(sessions.value[0]);
+      } else {
+        currentSession.value = null;
+        messages.value = [];
+      }
+    }
   }
 }
 
@@ -206,7 +323,7 @@ function editProvider(provider: AIProvider) {
 async function saveCurrentProvider() {
   const selectedModel = formModel.value || formCustomModel.value;
   if (!formName.value || !formBaseUrl.value || !formApiKey.value || !selectedModel) {
-    alert('Please fill in all required fields');
+    alert('请填写所有必填字段');
     return;
   }
 
@@ -232,7 +349,7 @@ async function saveCurrentProvider() {
 }
 
 async function removeProvider(id: string) {
-  if (confirm('Delete this provider?')) {
+  if (confirm('确定删除这个服务商吗？')) {
     await deleteProvider(id);
     providers.value = await providersStorage.getValue();
     if (activeProviderId.value === id) {
@@ -249,6 +366,10 @@ async function setActiveProvider(id: string) {
 
 function clearChat() {
   messages.value = [];
+  if (currentSession.value) {
+    currentSession.value.messages = [];
+    saveCurrentSession();
+  }
 }
 </script>
 
@@ -257,26 +378,35 @@ function clearChat() {
     <!-- Header -->
     <div class="header">
       <h1>TC Chrome Agent</h1>
-      <button class="settings-btn" @click="openSettings">Settings</button>
+      <div class="header-actions">
+        <button class="icon-btn" @click="newChat" title="新建对话">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+        </button>
+        <button class="icon-btn" @click="showHistory = true" title="历史对话">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+        </button>
+        <button class="settings-btn" @click="openSettings">设置</button>
+      </div>
     </div>
 
     <!-- Options bar -->
     <div class="options-bar">
       <label class="checkbox-label">
         <input type="checkbox" v-model="sharePageContent" />
-        Share current page content
+        分享当前页面内容
       </label>
-      <button v-if="messages.length" class="btn btn-sm btn-secondary" @click="clearChat">
-        Clear
-      </button>
     </div>
 
     <!-- Chat area -->
     <div class="chat-area" ref="chatAreaRef">
       <div v-if="!messages.length" class="empty-state">
-        <p>Welcome. Ask me anything.</p>
-        <p v-if="sharePageContent" style="font-size: 12px; margin-top: 12px; color: var(--muted-foreground);">
-          Page content will be shared with AI
+        <p>欢迎使用，有什么可以帮您？</p>
+        <p v-if="sharePageContent" class="empty-hint">
+          页面内容将与 AI 共享
         </p>
       </div>
 
@@ -286,8 +416,10 @@ function clearChat() {
         class="message"
         :class="msg.role"
       >
+        <div v-if="msg.content" class="message-time">{{ formatTime(msg.timestamp) }}</div>
         <div v-if="msg.quote" class="quote">"{{ msg.quote }}"</div>
-        <div v-html="msg.content.replace(/\n/g, '<br>')"></div>
+        <div v-if="msg.role === 'assistant'" class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
+        <div v-else v-html="msg.content.replace(/\n/g, '<br>')"></div>
       </div>
 
       <div v-if="isLoading" class="loading">
@@ -296,7 +428,7 @@ function clearChat() {
           <span></span>
           <span></span>
         </div>
-        Thinking...
+        思考中...
       </div>
     </div>
 
@@ -309,7 +441,7 @@ function clearChat() {
       <div class="input-wrapper">
         <textarea
           v-model="inputText"
-          placeholder="Type your message..."
+          placeholder="输入您的消息..."
           rows="1"
           @keydown="handleKeydown"
         ></textarea>
@@ -321,11 +453,48 @@ function clearChat() {
       </div>
     </div>
 
+    <!-- History Modal -->
+    <div v-if="showHistory" class="modal-overlay" @click.self="showHistory = false">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>历史对话</h2>
+          <button class="close-btn" @click="showHistory = false">×</button>
+        </div>
+        <div class="modal-body">
+          <div v-if="sessions.length === 0" class="empty-history">
+            暂无历史对话
+          </div>
+          <div v-else class="session-list">
+            <div
+              v-for="session in sessions"
+              :key="session.id"
+              class="session-item"
+              :class="{ active: session.id === currentSession?.id }"
+              @click="loadSession(session)"
+            >
+              <div class="session-info">
+                <div class="session-title">{{ session.title }}</div>
+                <div class="session-meta">
+                  <span>{{ session.messages?.length || 0 }} 条消息</span>
+                  <span>{{ formatSessionDate(session.updatedAt) }}</span>
+                </div>
+              </div>
+              <button class="delete-session-btn" @click="removeSession(session.id, $event)" title="删除">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Settings Modal -->
     <div v-if="showSettings" class="modal-overlay" @click.self="closeSettings">
       <div class="modal">
         <div class="modal-header">
-          <h2>{{ editingProvider ? 'Edit Provider' : 'Settings' }}</h2>
+          <h2>{{ editingProvider ? '编辑服务商' : '设置' }}</h2>
           <button class="close-btn" @click="closeSettings">×</button>
         </div>
         <div class="modal-body">
@@ -342,20 +511,20 @@ function clearChat() {
                 <div class="provider-model">{{ p.selectedModel }}</div>
               </div>
               <div class="provider-actions">
-                <button class="btn btn-sm btn-secondary" @click="editProvider(p)">Edit</button>
+                <button class="btn btn-sm btn-secondary" @click="editProvider(p)">编辑</button>
                 <button class="btn btn-sm btn-danger" @click="removeProvider(p.id)">×</button>
               </div>
             </div>
             <button class="btn btn-primary" style="width: 100%; margin-top: 8px;" @click="editingProvider = {} as any">
-              Add Provider
+              添加服务商
             </button>
           </div>
 
           <!-- Provider form -->
           <div v-else>
             <div class="form-group">
-              <label>Provider Name</label>
-              <input v-model="formName" placeholder="e.g., OpenAI, Claude, Local LLM" />
+              <label>服务商名称</label>
+              <input v-model="formName" placeholder="例如：OpenAI, Claude, 本地 LLM" />
             </div>
             <div class="form-group">
               <label>Base URL</label>
@@ -371,27 +540,27 @@ function clearChat() {
                 @click="fetchAvailableModels"
                 :disabled="isFetchingModels"
               >
-                {{ isFetchingModels ? 'Fetching...' : 'Fetch Models' }}
+                {{ isFetchingModels ? '获取中...' : '获取模型列表' }}
               </button>
             </div>
             <div class="form-group">
-              <label>Model</label>
+              <label>模型</label>
               <select v-model="formModel" v-if="availableModels.length">
-                <option value="">Select a model</option>
+                <option value="">选择模型</option>
                 <option v-for="m in availableModels" :key="m" :value="m">{{ m }}</option>
               </select>
               <input
                 v-else
                 v-model="formCustomModel"
-                placeholder="Enter model name (e.g., gpt-4)"
+                placeholder="输入模型名称（例如：gpt-4）"
               />
             </div>
             <div style="display: flex; gap: 12px; margin-top: 24px;">
               <button class="btn btn-secondary" @click="editingProvider = null; resetForm()">
-                Cancel
+                取消
               </button>
               <button class="btn btn-primary" style="flex: 1" @click="saveCurrentProvider">
-                Save Provider
+                保存
               </button>
             </div>
           </div>

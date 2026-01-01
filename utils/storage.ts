@@ -19,8 +19,11 @@ export interface ChatMessage {
 
 export interface ChatSession {
   id: string;
+  title: string;
   messages: ChatMessage[];
   createdAt: number;
+  updatedAt: number;
+  providerId?: string;
 }
 
 // Storage items
@@ -32,13 +35,83 @@ export const activeProviderIdStorage = storage.defineItem<string | null>('local:
   fallback: null,
 });
 
-export const chatSessionStorage = storage.defineItem<ChatSession | null>('local:chatSession', {
+export const currentSessionIdStorage = storage.defineItem<string | null>('local:currentSessionId', {
   fallback: null,
+});
+
+export const chatSessionsStorage = storage.defineItem<ChatSession[]>('local:chatSessions', {
+  fallback: [],
 });
 
 export const sharePageContentStorage = storage.defineItem<boolean>('local:sharePageContent', {
   fallback: false,
 });
+
+// Chat session helper functions
+export async function getAllSessions(): Promise<ChatSession[]> {
+  const sessions = await chatSessionsStorage.getValue();
+  // 确保每个 session 都有 messages 数组
+  return sessions
+    .map(s => ({ ...s, messages: s.messages || [] }))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export async function getSession(id: string): Promise<ChatSession | null> {
+  const sessions = await chatSessionsStorage.getValue();
+  return sessions.find(s => s.id === id) || null;
+}
+
+export async function getCurrentSession(): Promise<ChatSession | null> {
+  const currentId = await currentSessionIdStorage.getValue();
+  if (!currentId) return null;
+  return getSession(currentId);
+}
+
+export async function createSession(providerId?: string): Promise<ChatSession> {
+  const session: ChatSession = {
+    id: crypto.randomUUID(),
+    title: '新对话',
+    messages: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    providerId,
+  };
+  const sessions = await chatSessionsStorage.getValue();
+  sessions.push(session);
+  await chatSessionsStorage.setValue(sessions);
+  await currentSessionIdStorage.setValue(session.id);
+  return session;
+}
+
+export async function updateSession(session: ChatSession): Promise<void> {
+  const sessions = await chatSessionsStorage.getValue();
+  const index = sessions.findIndex(s => s.id === session.id);
+  if (index >= 0) {
+    // 深拷贝 messages 确保数据正确保存
+    sessions[index] = { 
+      ...session, 
+      messages: JSON.parse(JSON.stringify(session.messages || [])),
+      updatedAt: Date.now() 
+    };
+    await chatSessionsStorage.setValue(sessions);
+  }
+}
+
+export async function deleteSession(id: string): Promise<void> {
+  const sessions = await chatSessionsStorage.getValue();
+  await chatSessionsStorage.setValue(sessions.filter(s => s.id !== id));
+  const currentId = await currentSessionIdStorage.getValue();
+  if (currentId === id) {
+    const remaining = await chatSessionsStorage.getValue();
+    await currentSessionIdStorage.setValue(remaining[0]?.id || null);
+  }
+}
+
+export async function generateSessionTitle(firstMessage: string): Promise<string> {
+  const maxLen = 20;
+  const title = firstMessage.replace(/\n/g, ' ').trim();
+  return title.length > maxLen ? title.substring(0, maxLen) + '...' : title;
+}
 
 // Helper functions
 export async function getActiveProvider(): Promise<AIProvider | null> {
