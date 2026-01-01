@@ -34,24 +34,21 @@ const handleClick = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  background: #ffffff;
+  width: 24px;
+  height: 24px;
+  background: transparent;
   border: none;
-  border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   transition: all 200ms ease-out;
   user-select: none;
 }
 
 .tc-floating-btn:hover {
-  transform: scale(1.1);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  transform: scale(1.15);
 }
 
 .tc-floating-btn:active {
-  transform: scale(0.95);
+  transform: scale(0.9);
 }
 
 .tc-floating-btn img {

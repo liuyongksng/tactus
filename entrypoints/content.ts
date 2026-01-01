@@ -53,8 +53,9 @@ export default defineContentScript({
       anchor: 'body',
       onMount: (container) => {
         const app = createApp(SideFloatingBall, {
+          iconUrl: iconUrl,
           onClick: () => {
-            browser.runtime.sendMessage({ type: 'OPEN_SIDEPANEL' });
+            browser.runtime.sendMessage({ type: 'TOGGLE_SIDEPANEL' });
           },
         });
         app.mount(container);

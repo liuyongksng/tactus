@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue';
 
+const props = defineProps<{
+  iconUrl: string;
+}>();
+
 const emit = defineEmits<{
   click: [];
 }>();
@@ -92,9 +96,7 @@ onUnmounted(() => {
     @click="handleClick"
   >
     <div class="ball-inner">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-      </svg>
+      <img :src="props.iconUrl" alt="AI 助手" width="28" height="28" />
     </div>
     <div class="ball-tooltip">AI 助手</div>
   </div>
@@ -118,21 +120,22 @@ onUnmounted(() => {
 }
 
 .ball-inner {
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #B8860B 0%, #D4A84B 100%);
-  color: #FFFFFF;
+  background: transparent;
   border-radius: 8px 0 0 8px;
-  box-shadow: 0 4px 12px rgba(26, 26, 26, 0.15);
   transition: all 200ms ease-out;
 }
 
+.ball-inner img {
+  pointer-events: none;
+}
+
 .side-floating-ball:hover .ball-inner {
-  background: linear-gradient(135deg, #D4A84B 0%, #B8860B 100%);
-  box-shadow: 0 6px 16px rgba(26, 26, 26, 0.2);
+  transform: scale(1.1);
 }
 
 .side-floating-ball:active .ball-inner {

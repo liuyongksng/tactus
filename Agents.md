@@ -1,5 +1,5 @@
-- Use Simplified Chinese forever to reply
-- In case you are unsure about some code framework, use the context7 mcp service to get the latest information.
+- Use Simplified Chinese forever to reply.
+- When writing code involving the WXT framework, always use the context7 MCP service to get the latest information.
 - When modifications to the extension's interface or display-related aspects are required, always use the Professional style.
 
 <skills_system priority="1">
