@@ -242,6 +242,33 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+// Textarea ref for auto-resize
+const textareaRef = ref<HTMLTextAreaElement | null>(null);
+
+// Auto-resize textarea based on content (max 6 lines)
+function autoResizeTextarea() {
+  const textarea = textareaRef.value;
+  if (!textarea) return;
+  
+  // Reset height to auto to get the correct scrollHeight
+  textarea.style.height = 'auto';
+  
+  // Calculate line height (approximately 22px with current font settings)
+  const lineHeight = 22;
+  const maxLines = 6;
+  const maxHeight = lineHeight * maxLines;
+  const paddingY = 24; // 12px top + 12px bottom padding
+  
+  // Set height based on content, capped at max height
+  const newHeight = Math.min(textarea.scrollHeight, maxHeight + paddingY);
+  textarea.style.height = `${newHeight}px`;
+}
+
+// Watch input text changes to auto-resize
+watch(inputText, () => {
+  nextTick(autoResizeTextarea);
+});
+
 // New chat
 async function newChat() {
   // 只重置状态，不立即创建 session，等发送消息时再创建
@@ -440,6 +467,7 @@ function clearChat() {
       </div>
       <div class="input-wrapper">
         <textarea
+          ref="textareaRef"
           v-model="inputText"
           placeholder="输入您的消息..."
           rows="1"

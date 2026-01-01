@@ -270,11 +270,13 @@ body {
   resize: none;
   outline: none;
   font-family: var(--font-body);
-  max-height: 100px;
+  min-height: 46px;
+  max-height: 156px; /* 6 lines * 22px line-height + 24px padding */
   background: transparent;
   color: var(--foreground);
-  line-height: 1.6;
-  transition: border-color 150ms ease-out;
+  line-height: 22px;
+  overflow-y: auto;
+  transition: border-color 150ms ease-out, height 100ms ease-out;
 }
 
 .input-wrapper textarea::placeholder {
