@@ -98,26 +98,7 @@ body {
   color: var(--accent);
 }
 
-.settings-btn {
-  background: transparent;
-  border: 1px solid var(--foreground);
-  color: var(--foreground);
-  padding: 8px 14px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 12px;
-  font-family: var(--font-mono);
-  font-weight: 500;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  transition: all 200ms ease-out;
-}
 
-.settings-btn:hover {
-  background: var(--muted);
-  border-color: var(--accent);
-  color: var(--accent);
-}
 
 /* Options bar */
 .options-bar {
@@ -255,50 +236,203 @@ body {
   color: var(--foreground);
 }
 
-.input-wrapper {
-  display: flex;
-  gap: 12px;
-  align-items: flex-end;
+.input-box {
+  background: var(--card);
+  border: 1px solid var(--input);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color 150ms ease-out;
 }
 
-.input-wrapper textarea {
-  flex: 1;
+.input-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(184, 134, 11, 0.1);
+}
+
+.input-box textarea {
+  width: 100%;
   padding: 12px 16px;
-  border: 1px solid var(--input);
-  border-radius: 8px;
+  border: none;
   font-size: 14px;
   resize: none;
   outline: none;
   font-family: var(--font-body);
   min-height: 46px;
-  max-height: 156px; /* 6 lines * 22px line-height + 24px padding */
+  max-height: 156px;
   background: transparent;
   color: var(--foreground);
   line-height: 22px;
   overflow-y: auto;
-  transition: border-color 150ms ease-out, height 100ms ease-out;
 }
 
-.input-wrapper textarea::placeholder {
+.input-box textarea::placeholder {
   color: rgba(107, 107, 107, 0.6);
 }
 
-.input-wrapper textarea:hover {
-  border-color: var(--border-hover);
+.input-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--card);
 }
 
-.input-wrapper textarea:focus {
+/* Model selector */
+.model-selector-wrapper {
+  position: relative;
+}
+
+.model-selector-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--muted-foreground);
+  transition: all 200ms ease-out;
+}
+
+.model-selector-btn:hover {
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(184, 134, 11, 0.1);
+  color: var(--accent);
+}
+
+.model-selector-btn .model-name {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-dropdown {
+  position: fixed;
+  bottom: 80px;
+  right: 20px;
+  min-width: 260px;
+  max-width: 320px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  z-index: 1001;
+}
+
+.model-options-list {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.model-options-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.model-options-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.model-options-list::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.model-options-list::-webkit-scrollbar-thumb:hover {
+  background: var(--border-hover);
+}
+
+.model-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+}
+
+.dropdown-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.dropdown-empty span {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.model-option {
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: background 150ms ease-out;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: 6px;
+  margin-bottom: 2px;
+}
+
+.model-option:last-child {
+  margin-bottom: 0;
+}
+
+.model-option:hover {
+  background: var(--muted);
+}
+
+.model-option.active {
+  background: rgba(184, 134, 11, 0.1);
+}
+
+.model-option .option-provider {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+.model-option .option-model {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--foreground);
+  word-break: break-all;
+}
+
+.dropdown-divider {
+  height: 1px;
+  background: var(--border);
+}
+
+.dropdown-settings-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 14px;
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: background 150ms ease-out;
+}
+
+.dropdown-settings-btn:hover {
+  background: var(--muted);
 }
 
 .send-btn {
   background: var(--accent);
   border: none;
   color: var(--accent-foreground);
-  min-width: 44px;
-  min-height: 44px;
-  border-radius: 8px;
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 6px;
   cursor: pointer;
   display: flex;
   align-items: center;

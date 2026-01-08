@@ -7,10 +7,7 @@ import {
   sharePageContentStorage,
   currentSessionIdStorage,
   getActiveProvider,
-  saveProvider,
-  deleteProvider,
   getAllSessions,
-  getSession,
   createSession,
   updateSession,
   deleteSession,
@@ -19,7 +16,7 @@ import {
   type ChatMessage,
   type ChatSession,
 } from '../../utils/storage';
-import { fetchModels, streamChat } from '../../utils/api';
+import { streamChat } from '../../utils/api';
 
 // Configure marked for safe rendering
 marked.setOptions({
@@ -33,13 +30,12 @@ function renderMarkdown(content: string): string {
   return marked.parse(content) as string;
 }
 
-// State - 使用 shallowRef 优化流式更新性能
+// State
 const messages = shallowRef<ChatMessage[]>([]);
 const inputText = ref('');
 const sharePageContent = ref(false);
 const pendingQuote = ref<string | null>(null);
 const isLoading = ref(false);
-const showSettings = ref(false);
 const showHistory = ref(false);
 const chatAreaRef = ref<HTMLElement | null>(null);
 
@@ -47,19 +43,36 @@ const chatAreaRef = ref<HTMLElement | null>(null);
 const currentSession = ref<ChatSession | null>(null);
 const sessions = ref<ChatSession[]>([]);
 
-// Settings state
+// Provider state
 const providers = ref<AIProvider[]>([]);
 const activeProviderId = ref<string | null>(null);
-const editingProvider = ref<AIProvider | null>(null);
-const availableModels = ref<string[]>([]);
-const isFetchingModels = ref(false);
+const showModelSelector = ref(false);
 
-// Form state
-const formName = ref('');
-const formBaseUrl = ref('');
-const formApiKey = ref('');
-const formModel = ref('');
-const formCustomModel = ref('');
+// Computed
+const activeProvider = computed(() => {
+  return providers.value.find(p => p.id === activeProviderId.value) || null;
+});
+
+const activeModelName = computed(() => {
+  if (!activeProvider.value) return '未配置';
+  const model = activeProvider.value.selectedModel;
+  return model.length > 12 ? model.substring(0, 12) + '...' : model;
+});
+
+// 构建所有可选的模型列表（供应商+模型组合）
+const allModelOptions = computed(() => {
+  const options: { providerId: string; providerName: string; model: string }[] = [];
+  for (const p of providers.value) {
+    for (const m of p.models) {
+      options.push({
+        providerId: p.id,
+        providerName: p.name,
+        model: m,
+      });
+    }
+  }
+  return options;
+});
 
 // Format timestamp
 function formatTime(timestamp: number): string {
@@ -93,22 +106,28 @@ onMounted(async () => {
   sharePageContent.value = await sharePageContentStorage.getValue();
   sessions.value = await getAllSessions();
   
-  // 每次打开侧边栏都是新对话状态（但不立即创建 session，等发送消息时再创建）
   currentSession.value = null;
   messages.value = [];
 
   // Check for pending quote from content script
   const result = await browser.storage.local.get('pendingQuote');
   if (result.pendingQuote) {
-    pendingQuote.value = result.pendingQuote;
+    pendingQuote.value = result.pendingQuote as string;
     await browser.storage.local.remove('pendingQuote');
   }
 
   // Listen for storage changes
-  browser.storage.local.onChanged.addListener((changes) => {
+  browser.storage.local.onChanged.addListener(async (changes) => {
     if (changes.pendingQuote?.newValue) {
-      pendingQuote.value = changes.pendingQuote.newValue;
+      pendingQuote.value = changes.pendingQuote.newValue as string;
       browser.storage.local.remove('pendingQuote');
+    }
+    // 监听 providers 变化，同步更新
+    if (changes['local:providers']) {
+      providers.value = await providersStorage.getValue();
+    }
+    if (changes['local:activeProviderId']) {
+      activeProviderId.value = await activeProviderIdStorage.getValue();
     }
   });
 });
@@ -158,7 +177,6 @@ async function getPageContent(): Promise<string | undefined> {
 // Save current session
 async function saveCurrentSession() {
   if (!currentSession.value) return;
-  // 使用 JSON 深拷贝确保 messages 是纯数据
   const sessionToSave: ChatSession = {
     ...currentSession.value,
     messages: JSON.parse(JSON.stringify(messages.value)),
@@ -174,12 +192,11 @@ async function sendMessage() {
 
   const provider = await getActiveProvider();
   if (!provider) {
-    alert('请先配置 AI 服务商');
-    showSettings.value = true;
+    alert('请先在设置中配置 AI 服务商');
+    openSettings();
     return;
   }
 
-  // Create session if not exists
   if (!currentSession.value) {
     currentSession.value = await createSession(activeProviderId.value || undefined);
     sessions.value = await getAllSessions();
@@ -198,7 +215,6 @@ async function sendMessage() {
   pendingQuote.value = null;
   scrollToBottom();
 
-  // Update session title if first message
   if (messages.value.length === 1) {
     currentSession.value.title = await generateSessionTitle(text);
   }
@@ -218,12 +234,10 @@ async function sendMessage() {
 
     for await (const chunk of streamChat(provider, messages.value.slice(0, -1), pageContent)) {
       assistantMessage.content += chunk;
-      // 使用 triggerRef 手动触发更新，比重建数组性能更好
       triggerRef(messages);
       scrollToBottom();
     }
     
-    // Update assistant message timestamp after completion
     assistantMessage.timestamp = Date.now();
   } catch (error: any) {
     messages.value.push({
@@ -250,33 +264,26 @@ function handleKeydown(e: KeyboardEvent) {
 // Textarea ref for auto-resize
 const textareaRef = ref<HTMLTextAreaElement | null>(null);
 
-// Auto-resize textarea based on content (max 6 lines)
 function autoResizeTextarea() {
   const textarea = textareaRef.value;
   if (!textarea) return;
   
-  // Reset height to auto to get the correct scrollHeight
   textarea.style.height = 'auto';
-  
-  // Calculate line height (approximately 22px with current font settings)
   const lineHeight = 22;
   const maxLines = 6;
   const maxHeight = lineHeight * maxLines;
-  const paddingY = 24; // 12px top + 12px bottom padding
+  const paddingY = 24;
   
-  // Set height based on content, capped at max height
   const newHeight = Math.min(textarea.scrollHeight, maxHeight + paddingY);
   textarea.style.height = `${newHeight}px`;
 }
 
-// Watch input text changes to auto-resize
 watch(inputText, () => {
   nextTick(autoResizeTextarea);
 });
 
 // New chat
 async function newChat() {
-  // 只重置状态，不立即创建 session，等发送消息时再创建
   currentSession.value = null;
   messages.value = [];
   showHistory.value = false;
@@ -308,100 +315,30 @@ async function removeSession(id: string, e: Event) {
   }
 }
 
-// Settings functions
+// Open settings page
 function openSettings() {
-  showSettings.value = true;
-  resetForm();
+  browser.runtime.openOptionsPage();
 }
 
-function closeSettings() {
-  showSettings.value = false;
-  editingProvider.value = null;
-  resetForm();
-}
-
-function resetForm() {
-  formName.value = '';
-  formBaseUrl.value = '';
-  formApiKey.value = '';
-  formModel.value = '';
-  formCustomModel.value = '';
-  availableModels.value = [];
-}
-
-async function fetchAvailableModels() {
-  if (!formBaseUrl.value || !formApiKey.value) return;
-  
-  isFetchingModels.value = true;
-  try {
-    const models = await fetchModels(formBaseUrl.value, formApiKey.value);
-    availableModels.value = models.map(m => m.id);
-  } catch (e) {
-    console.error('Failed to fetch models:', e);
-  } finally {
-    isFetchingModels.value = false;
-  }
-}
-
-function editProvider(provider: AIProvider) {
-  editingProvider.value = provider;
-  formName.value = provider.name;
-  formBaseUrl.value = provider.baseUrl;
-  formApiKey.value = provider.apiKey;
-  formModel.value = provider.selectedModel;
-  availableModels.value = provider.models;
-}
-
-async function saveCurrentProvider() {
-  const selectedModel = formModel.value || formCustomModel.value;
-  if (!formName.value || !formBaseUrl.value || !formApiKey.value || !selectedModel) {
-    alert('请填写所有必填字段');
-    return;
-  }
-
-  const provider: AIProvider = {
-    id: editingProvider.value?.id || crypto.randomUUID(),
-    name: formName.value,
-    baseUrl: formBaseUrl.value,
-    apiKey: formApiKey.value,
-    models: availableModels.value,
-    selectedModel,
-  };
-
-  await saveProvider(provider);
-  providers.value = await providersStorage.getValue();
-  
-  if (!activeProviderId.value) {
-    activeProviderId.value = provider.id;
-    await activeProviderIdStorage.setValue(provider.id);
-  }
-
-  editingProvider.value = null;
-  resetForm();
-}
-
-async function removeProvider(id: string) {
-  if (confirm('确定删除这个服务商吗？')) {
-    await deleteProvider(id);
-    providers.value = await providersStorage.getValue();
-    if (activeProviderId.value === id) {
-      activeProviderId.value = providers.value[0]?.id || null;
-      await activeProviderIdStorage.setValue(activeProviderId.value);
+// Select provider and model
+async function selectProviderModel(providerId: string, model: string) {
+  // 更新 provider 的 selectedModel
+  const provider = providers.value.find(p => p.id === providerId);
+  if (provider && provider.selectedModel !== model) {
+    provider.selectedModel = model;
+    // 保存到 storage
+    const allProviders = await providersStorage.getValue();
+    const idx = allProviders.findIndex(p => p.id === providerId);
+    if (idx >= 0) {
+      allProviders[idx].selectedModel = model;
+      await providersStorage.setValue(allProviders);
     }
   }
-}
-
-async function setActiveProvider(id: string) {
-  activeProviderId.value = id;
-  await activeProviderIdStorage.setValue(id);
-}
-
-function clearChat() {
-  messages.value = [];
-  if (currentSession.value) {
-    currentSession.value.messages = [];
-    saveCurrentSession();
-  }
+  
+  // 设置为当前活跃的 provider
+  activeProviderId.value = providerId;
+  await activeProviderIdStorage.setValue(providerId);
+  showModelSelector.value = false;
 }
 </script>
 
@@ -421,7 +358,12 @@ function clearChat() {
             <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
           </svg>
         </button>
-        <button class="settings-btn" @click="openSettings">设置</button>
+        <button class="icon-btn" @click="openSettings" title="设置">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/>
+            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
+          </svg>
+        </button>
       </div>
     </div>
 
@@ -470,7 +412,7 @@ function clearChat() {
         <div class="quote-text">"{{ pendingQuote }}"</div>
         <button class="remove-quote" @click="pendingQuote = null">×</button>
       </div>
-      <div class="input-wrapper">
+      <div class="input-box">
         <textarea
           ref="textareaRef"
           v-model="inputText"
@@ -478,11 +420,48 @@ function clearChat() {
           rows="1"
           @keydown="handleKeydown"
         ></textarea>
-        <button class="send-btn" @click="sendMessage" :disabled="isLoading || !inputText.trim()">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
-          </svg>
-        </button>
+        <div class="input-actions">
+          <!-- Model selector -->
+          <div class="model-selector-wrapper">
+            <button 
+              class="model-selector-btn" 
+              @click="showModelSelector = !showModelSelector"
+              :title="activeProvider?.selectedModel || '选择模型'"
+            >
+              <span class="model-name">{{ activeModelName }}</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M6 9l6 6 6-6"/>
+              </svg>
+            </button>
+            <!-- Model dropdown -->
+            <div v-if="showModelSelector" class="model-dropdown">
+              <div v-if="allModelOptions.length === 0" class="dropdown-empty">
+                <span>暂无模型配置</span>
+                <button class="dropdown-settings-btn" @click="openSettings">去设置</button>
+              </div>
+              <div v-else class="model-options-list">
+                <div
+                  v-for="(opt, idx) in allModelOptions"
+                  :key="`${opt.providerId}-${opt.model}-${idx}`"
+                  class="model-option"
+                  :class="{ active: opt.providerId === activeProviderId && opt.model === activeProvider?.selectedModel }"
+                  @click="selectProviderModel(opt.providerId, opt.model)"
+                >
+                  <span class="option-provider">{{ opt.providerName }}</span>
+                  <span class="option-model">{{ opt.model }}</span>
+                </div>
+              </div>
+            </div>
+            <!-- Backdrop -->
+            <div v-if="showModelSelector" class="model-backdrop" @click="showModelSelector = false"></div>
+          </div>
+          <!-- Send button -->
+          <button class="send-btn" @click="sendMessage" :disabled="isLoading || !inputText.trim()">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -516,84 +495,6 @@ function clearChat() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
                 </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Settings Modal -->
-    <div v-if="showSettings" class="modal-overlay" @click.self="closeSettings">
-      <div class="modal">
-        <div class="modal-header">
-          <h2>{{ editingProvider ? '编辑服务商' : '设置' }}</h2>
-          <button class="close-btn" @click="closeSettings">×</button>
-        </div>
-        <div class="modal-body">
-          <!-- Provider list -->
-          <div v-if="!editingProvider" class="provider-list">
-            <div
-              v-for="p in providers"
-              :key="p.id"
-              class="provider-item"
-              :class="{ active: p.id === activeProviderId }"
-            >
-              <div class="provider-info" @click="setActiveProvider(p.id)">
-                <div class="provider-name">{{ p.name }}</div>
-                <div class="provider-model">{{ p.selectedModel }}</div>
-              </div>
-              <div class="provider-actions">
-                <button class="btn btn-sm btn-secondary" @click="editProvider(p)">编辑</button>
-                <button class="btn btn-sm btn-danger" @click="removeProvider(p.id)">×</button>
-              </div>
-            </div>
-            <button class="btn btn-primary" style="width: 100%; margin-top: 8px;" @click="editingProvider = {} as any">
-              添加服务商
-            </button>
-          </div>
-
-          <!-- Provider form -->
-          <div v-else>
-            <div class="form-group">
-              <label>服务商名称</label>
-              <input v-model="formName" placeholder="例如：OpenAI, Claude, 本地 LLM" />
-            </div>
-            <div class="form-group">
-              <label>Base URL</label>
-              <input v-model="formBaseUrl" placeholder="https://api.openai.com" />
-            </div>
-            <div class="form-group">
-              <label>API Key</label>
-              <input v-model="formApiKey" type="password" placeholder="sk-..." />
-            </div>
-            <div class="form-group">
-              <button
-                class="btn btn-secondary btn-sm"
-                @click="fetchAvailableModels"
-                :disabled="isFetchingModels"
-              >
-                {{ isFetchingModels ? '获取中...' : '获取模型列表' }}
-              </button>
-            </div>
-            <div class="form-group">
-              <label>模型</label>
-              <select v-model="formModel" v-if="availableModels.length">
-                <option value="">选择模型</option>
-                <option v-for="m in availableModels" :key="m" :value="m">{{ m }}</option>
-              </select>
-              <input
-                v-else
-                v-model="formCustomModel"
-                placeholder="输入模型名称（例如：gpt-4）"
-              />
-            </div>
-            <div style="display: flex; gap: 12px; margin-top: 24px;">
-              <button class="btn btn-secondary" @click="editingProvider = null; resetForm()">
-                取消
-              </button>
-              <button class="btn btn-primary" style="flex: 1" @click="saveCurrentProvider">
-                保存
               </button>
             </div>
           </div>
