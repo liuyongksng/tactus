@@ -16,7 +16,7 @@ import {
   type ChatMessage,
   type ChatSession,
 } from '../../utils/storage';
-import { streamChat } from '../../utils/api';
+import { streamChat, getLastApiMessages } from '../../utils/api';
 
 // Configure marked for safe rendering
 marked.setOptions({
@@ -47,6 +47,10 @@ const sessions = ref<ChatSession[]>([]);
 const providers = ref<AIProvider[]>([]);
 const activeProviderId = ref<string | null>(null);
 const showModelSelector = ref(false);
+
+// Debug state
+const showDebugModal = ref(false);
+const debugApiMessages = ref<{ role: string; content: string }[]>([]);
 
 // Computed
 const activeProvider = computed(() => {
@@ -340,6 +344,18 @@ async function selectProviderModel(providerId: string, model: string) {
   await activeProviderIdStorage.setValue(providerId);
   showModelSelector.value = false;
 }
+
+// 查看调试信息
+function viewDebugMessages() {
+  debugApiMessages.value = getLastApiMessages();
+  showDebugModal.value = true;
+}
+
+// 复制调试信息到剪贴板
+function copyDebugMessages() {
+  const text = JSON.stringify(debugApiMessages.value, null, 2);
+  navigator.clipboard.writeText(text);
+}
 </script>
 
 <template>
@@ -348,6 +364,11 @@ async function selectProviderModel(providerId: string, model: string) {
     <div class="header">
       <h1>TC Chrome Agent</h1>
       <div class="header-actions">
+        <button class="icon-btn" @click="viewDebugMessages" title="查看 API 上下文">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
+          </svg>
+        </button>
         <button class="icon-btn" @click="newChat" title="新建对话">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 5v14M5 12h14"/>
@@ -496,6 +517,41 @@ async function selectProviderModel(providerId: string, model: string) {
                   <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
                 </svg>
               </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Debug Modal -->
+    <div v-if="showDebugModal" class="modal-overlay" @click.self="showDebugModal = false">
+      <div class="modal debug-modal">
+        <div class="modal-header">
+          <h2>API 上下文调试</h2>
+          <div class="debug-header-actions">
+            <button class="copy-btn" @click="copyDebugMessages" title="复制 JSON">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+              </svg>
+              复制
+            </button>
+            <button class="close-btn" @click="showDebugModal = false">×</button>
+          </div>
+        </div>
+        <div class="modal-body debug-body">
+          <div v-if="debugApiMessages.length === 0" class="empty-history">
+            暂无 API 消息记录，请先发送一条消息
+          </div>
+          <div v-else class="debug-messages">
+            <div 
+              v-for="(msg, idx) in debugApiMessages" 
+              :key="idx" 
+              class="debug-message"
+              :class="msg.role"
+            >
+              <div class="debug-role">{{ msg.role }}</div>
+              <pre class="debug-content">{{ msg.content }}</pre>
             </div>
           </div>
         </div>

@@ -5,6 +5,13 @@ export interface ModelInfo {
   name?: string;
 }
 
+// 存储最后一次发送给模型的完整上下文，用于调试
+let lastApiMessages: { role: string; content: string }[] = [];
+
+export function getLastApiMessages() {
+  return lastApiMessages;
+}
+
 export async function fetchModels(baseUrl: string, apiKey: string): Promise<ModelInfo[]> {
   try {
     const url = `${baseUrl.replace(/\/$/, '')}/v1/models`;
@@ -55,6 +62,9 @@ export async function* streamChat(
     })),
   ];
 
+  // 保存最后一次发送的消息用于调试
+  lastApiMessages = apiMessages;
+
   const url = `${provider.baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
   const response = await fetch(url, {
     method: 'POST',
@@ -78,6 +88,7 @@ export async function* streamChat(
 
   const decoder = new TextDecoder();
   let buffer = '';
+  let fullResponse = '';
 
   while (true) {
     const { done, value } = await reader.read();
@@ -90,13 +101,25 @@ export async function* streamChat(
     for (const line of lines) {
       if (line.startsWith('data: ')) {
         const data = line.slice(6);
-        if (data === '[DONE]') return;
+        if (data === '[DONE]') {
+          // 流结束时，保存模型的完整回复
+          lastApiMessages = [...lastApiMessages, { role: 'assistant', content: fullResponse }];
+          return;
+        }
         try {
           const json = JSON.parse(data);
           const content = json.choices?.[0]?.delta?.content;
-          if (content) yield content;
+          if (content) {
+            fullResponse += content;
+            yield content;
+          }
         } catch {}
       }
     }
+  }
+
+  // 如果没有收到 [DONE]，也保存已收集的回复
+  if (fullResponse) {
+    lastApiMessages = [...lastApiMessages, { role: 'assistant', content: fullResponse }];
   }
 }

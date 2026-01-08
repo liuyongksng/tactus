@@ -1049,3 +1049,119 @@ body {
   margin-right: 0.5em;
   accent-color: var(--accent);
 }
+
+
+/* Debug Modal Styles */
+.debug-modal {
+  max-width: 560px;
+  width: 95%;
+}
+
+.debug-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.copy-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: all 200ms ease-out;
+}
+
+.copy-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--card);
+}
+
+.debug-body {
+  padding: 16px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.debug-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.debug-message {
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.debug-message.system {
+  border-left: 3px solid #6B7280;
+}
+
+.debug-message.user {
+  border-left: 3px solid var(--accent);
+}
+
+.debug-message.assistant {
+  border-left: 3px solid #10B981;
+}
+
+.debug-role {
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+}
+
+.debug-message.system .debug-role {
+  color: #6B7280;
+}
+
+.debug-message.user .debug-role {
+  color: var(--accent);
+}
+
+.debug-message.assistant .debug-role {
+  color: #10B981;
+}
+
+.debug-content {
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--foreground);
+  margin: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  background: transparent;
+}
+
+.debug-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.debug-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.debug-content::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
