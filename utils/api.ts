@@ -1,16 +1,153 @@
-import type { AIProvider, ChatMessage } from './storage';
-import { availableTools, generateToolsPrompt, parseToolCalls, hasToolCall, removeToolCallMarkers, getToolStatusText, type ToolCall, type ToolResult } from './tools';
+import OpenAI from 'openai';
+import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
+import type { AIProvider, ChatMessage } from './db';
+import { 
+  getFilteredTools, 
+  generateContextPrompt, 
+  getToolStatusText, 
+  type FunctionTool,
+  type ToolCall, 
+  type ToolResult, 
+  type SkillInfo 
+} from './tools';
 
 export interface ModelInfo {
   id: string;
   name?: string;
 }
 
-// API 消息类型，支持不同角色
+// ============ 容错机制配置 ============
+
+export interface RetryConfig {
+  maxRetries: number;      // 最大重试次数
+  baseDelay: number;       // 基础延迟（毫秒）
+  maxDelay: number;        // 最大延迟（毫秒）
+  timeout: number;         // 请求超时（毫秒）
+}
+
+const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 3,
+  baseDelay: 1000,
+  maxDelay: 10000,
+  timeout: 60000,  // 60秒超时
+};
+
+// 错误类型分类
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly code: string,
+    public readonly retryable: boolean,
+    public readonly originalError?: unknown
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+// 友好的错误消息映射
+const ERROR_MESSAGES: Record<string, string> = {
+  'TIMEOUT': '请求超时，服务器响应太慢，请稍后重试',
+  'NETWORK_ERROR': '网络连接失败，请检查网络后重试',
+  'AUTH_ERROR': 'API 密钥无效或已过期，请检查配置',
+  'RATE_LIMIT': '请求太频繁，已被限流，请稍后重试',
+  'QUOTA_EXCEEDED': 'API 配额已用完，请检查账户余额',
+  'MODEL_NOT_FOUND': '模型不存在或无权访问，请检查模型配置',
+  'INVALID_REQUEST': '请求参数错误，请检查输入内容',
+  'SERVER_ERROR': '服务器内部错误，请稍后重试',
+  'UNKNOWN': '发生未知错误，请稍后重试',
+};
+
+// 解析错误并分类
+function parseError(error: unknown): ApiError {
+  if (error instanceof ApiError) {
+    return error;
+  }
+
+  // 超时错误
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return new ApiError(ERROR_MESSAGES['TIMEOUT'], 'TIMEOUT', true, error);
+  }
+
+  // OpenAI SDK 错误
+  if (error instanceof OpenAI.APIError) {
+    const status = error.status;
+    
+    if (status === 401 || status === 403) {
+      return new ApiError(ERROR_MESSAGES['AUTH_ERROR'], 'AUTH_ERROR', false, error);
+    }
+    if (status === 429) {
+      // 检查是否是配额问题
+      const message = error.message?.toLowerCase() || '';
+      if (message.includes('quota') || message.includes('billing') || message.includes('insufficient')) {
+        return new ApiError(ERROR_MESSAGES['QUOTA_EXCEEDED'], 'QUOTA_EXCEEDED', false, error);
+      }
+      return new ApiError(ERROR_MESSAGES['RATE_LIMIT'], 'RATE_LIMIT', true, error);
+    }
+    if (status === 404) {
+      return new ApiError(ERROR_MESSAGES['MODEL_NOT_FOUND'], 'MODEL_NOT_FOUND', false, error);
+    }
+    if (status === 400) {
+      return new ApiError(ERROR_MESSAGES['INVALID_REQUEST'], 'INVALID_REQUEST', false, error);
+    }
+    if (status && status >= 500) {
+      return new ApiError(ERROR_MESSAGES['SERVER_ERROR'], 'SERVER_ERROR', true, error);
+    }
+  }
+
+  // 网络错误
+  if (error instanceof TypeError && (error.message.includes('fetch') || error.message.includes('network'))) {
+    return new ApiError(ERROR_MESSAGES['NETWORK_ERROR'], 'NETWORK_ERROR', true, error);
+  }
+
+  // 通用错误处理
+  const message = error instanceof Error ? error.message : String(error);
+  
+  // 尝试从错误消息中识别类型
+  const lowerMessage = message.toLowerCase();
+  if (lowerMessage.includes('timeout')) {
+    return new ApiError(ERROR_MESSAGES['TIMEOUT'], 'TIMEOUT', true, error);
+  }
+  if (lowerMessage.includes('network') || lowerMessage.includes('econnrefused') || lowerMessage.includes('enotfound')) {
+    return new ApiError(ERROR_MESSAGES['NETWORK_ERROR'], 'NETWORK_ERROR', true, error);
+  }
+
+  return new ApiError(ERROR_MESSAGES['UNKNOWN'], 'UNKNOWN', false, error);
+}
+
+// 延迟函数
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// 计算指数退避延迟
+function getRetryDelay(attempt: number, config: RetryConfig): number {
+  const exponentialDelay = config.baseDelay * Math.pow(2, attempt);
+  const jitter = Math.random() * 1000; // 添加随机抖动
+  return Math.min(exponentialDelay + jitter, config.maxDelay);
+}
+
+// 创建带超时的 AbortController
+function createTimeoutController(timeout: number): { controller: AbortController; clear: () => void } {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  return {
+    controller,
+    clear: () => clearTimeout(timeoutId),
+  };
+}
+
+// API 消息类型
 export interface ApiMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
-  toolName?: string; // 工具结果时的工具名称
+  content: string | null;
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: { name: string; arguments: string };
+  }>;
+  tool_call_id?: string;
+  name?: string;
 }
 
 // 存储最后一次发送给模型的完整上下文，用于调试
@@ -24,24 +161,27 @@ export function setLastApiMessages(messages: ApiMessage[]) {
   lastApiMessages = messages;
 }
 
+// 创建 OpenAI 客户端
+function createClient(provider: AIProvider): OpenAI {
+  return new OpenAI({
+    apiKey: provider.apiKey,
+    baseURL: `${provider.baseUrl.replace(/\/$/, '')}/v1`,
+    dangerouslyAllowBrowser: true, // 浏览器扩展环境需要
+  });
+}
+
 export async function fetchModels(baseUrl: string, apiKey: string): Promise<ModelInfo[]> {
   try {
-    const url = `${baseUrl.replace(/\/$/, '')}/v1/models`;
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+    const client = new OpenAI({
+      apiKey,
+      baseURL: `${baseUrl.replace(/\/$/, '')}/v1`,
+      dangerouslyAllowBrowser: true,
     });
     
-    if (!response.ok) {
-      throw new Error(`Failed to fetch models: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    return (data.data || []).map((m: any) => ({
+    const response = await client.models.list();
+    return response.data.map(m => ({
       id: m.id,
-      name: m.name || m.id,
+      name: m.id,
     }));
   } catch (error) {
     console.error('Error fetching models:', error);
@@ -52,8 +192,8 @@ export async function fetchModels(baseUrl: string, apiKey: string): Promise<Mode
 // 工具执行器类型
 export type ToolExecutor = (toolCall: ToolCall) => Promise<ToolResult>;
 
-// ReAct 配置
-export interface ReActConfig {
+// Function Calling 配置
+export interface FunctionCallingConfig {
   enableTools: boolean;
   toolExecutor?: ToolExecutor;
   maxIterations?: number;
@@ -65,17 +205,58 @@ export type StreamEvent =
   | { type: 'tool_call'; toolCall: ToolCall }
   | { type: 'tool_result'; result: ToolResult }
   | { type: 'thinking'; message: string }
+  | { type: 'error'; error: ApiError; retrying: boolean; attempt: number }
   | { type: 'done' };
+
+// 转换工具格式
+function convertTools(tools: FunctionTool[]): ChatCompletionTool[] {
+  return tools.map(t => ({
+    type: 'function' as const,
+    function: {
+      name: t.function.name,
+      description: t.function.description,
+      parameters: t.function.parameters,
+    },
+  }));
+}
+
+// 转换消息格式为 OpenAI SDK 格式
+function convertToOpenAIMessages(messages: ApiMessage[]): ChatCompletionMessageParam[] {
+  return messages.map(m => {
+    if (m.role === 'tool') {
+      return {
+        role: 'tool' as const,
+        content: m.content || '',
+        tool_call_id: m.tool_call_id!,
+      };
+    }
+    if (m.role === 'assistant' && m.tool_calls) {
+      return {
+        role: 'assistant' as const,
+        content: m.content,
+        tool_calls: m.tool_calls,
+      };
+    }
+    return {
+      role: m.role as 'system' | 'user' | 'assistant',
+      content: m.content || '',
+    };
+  });
+}
+
 
 export async function* streamChat(
   provider: AIProvider,
   messages: ChatMessage[],
-  context?: { sharePageContent?: boolean },
-  reactConfig?: ReActConfig
+  context?: { sharePageContent?: boolean; skills?: SkillInfo[]; pageInfo?: { domain: string; title: string; url?: string } },
+  config?: FunctionCallingConfig,
+  retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG
 ): AsyncGenerator<StreamEvent, void, unknown> {
-  const enableTools = reactConfig?.enableTools ?? true; // 默认启用工具
-  const toolExecutor = reactConfig?.toolExecutor;
-  const maxIterations = reactConfig?.maxIterations || 3;
+  const enableTools = config?.enableTools ?? true;
+  const toolExecutor = config?.toolExecutor;
+  const maxIterations = config?.maxIterations || 5;
+  
+  const client = createClient(provider);
   
   const basePrompt = `You are a helpful AI assistant. Always respond using Markdown format for better readability. Use:
 - Headers (##, ###) for sections
@@ -85,10 +266,10 @@ export async function* streamChat(
 - > for quotes
 - Tables when presenting structured data`;
 
-  // 始终添加工具说明，传递上下文信息
-  const toolsPrompt = generateToolsPrompt(availableTools, context);
-  const systemMessage = `${basePrompt}\n\n${toolsPrompt}`;
+  const contextPrompt = generateContextPrompt(context);
+  const systemMessage = `${basePrompt}\n\n${contextPrompt}`;
 
+  // 构建初始消息
   const apiMessages: ApiMessage[] = [
     { role: 'system', content: systemMessage },
     ...messages.map(m => ({
@@ -97,77 +278,178 @@ export async function* streamChat(
     })),
   ];
 
-  // 保存最后一次发送的消息用于调试
   lastApiMessages = [...apiMessages];
 
+  // 获取过滤后的工具列表
+  const tools = enableTools ? getFilteredTools(context) : [];
+  const openaiTools = tools.length > 0 ? convertTools(tools) : undefined;
+  
   let iteration = 0;
   let currentMessages = [...apiMessages];
   
   while (iteration < maxIterations) {
     iteration++;
     
-    // 转换为 API 格式（tool 角色转为 user）
-    const messagesForApi = currentMessages.map(m => ({
-      role: m.role === 'tool' ? 'user' : m.role,
-      content: m.content,
-    }));
+    // 带重试的 API 调用
+    let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
+    let lastError: ApiError | null = null;
     
-    const response = fetchChatCompletion(provider, messagesForApi);
-    let fullResponse = '';
-    let pendingContent = ''; // 待输出的内容缓冲区
-    let inToolCall = false; // 是否正在工具调用标记内
-    
-    // 流式读取响应
-    for await (const chunk of response) {
-      fullResponse += chunk;
-      pendingContent += chunk;
+    for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
+      const { controller, clear } = createTimeoutController(retryConfig.timeout);
       
-      // 检查是否开始了工具调用标记
-      if (pendingContent.includes('<tool_call>')) {
-        inToolCall = true;
-        // 输出 <tool_call> 之前的内容
-        const beforeToolCall = pendingContent.split('<tool_call>')[0];
-        if (beforeToolCall) {
-          yield { type: 'content', content: beforeToolCall };
+      try {
+        stream = await client.chat.completions.create({
+          model: provider.selectedModel,
+          messages: convertToOpenAIMessages(currentMessages),
+          tools: openaiTools,
+          tool_choice: openaiTools ? 'auto' : undefined,
+          stream: true,
+        }, {
+          signal: controller.signal,
+        });
+        
+        clear();
+        lastError = null;
+        break; // 成功，跳出重试循环
+        
+      } catch (error) {
+        clear();
+        lastError = parseError(error);
+        
+        // 不可重试的错误，直接抛出
+        if (!lastError.retryable) {
+          yield { type: 'error', error: lastError, retrying: false, attempt };
+          throw lastError;
         }
-        pendingContent = '<tool_call>' + pendingContent.split('<tool_call>').slice(1).join('<tool_call>');
-      }
-      
-      // 如果不在工具调用中，正常输出
-      if (!inToolCall) {
-        // 检查是否可能是工具调用的开始（部分匹配）
-        const possibleStart = '<tool_call>'.slice(0, Math.min(pendingContent.length, 11));
-        if (pendingContent.endsWith(possibleStart.slice(0, pendingContent.length)) && pendingContent.length < 11) {
-          // 可能是工具调用开始，暂不输出
-          continue;
+        
+        // 已达最大重试次数
+        if (attempt >= retryConfig.maxRetries) {
+          yield { type: 'error', error: lastError, retrying: false, attempt };
+          throw lastError;
         }
-        yield { type: 'content', content: chunk };
-        pendingContent = '';
+        
+        // 通知正在重试
+        const retryDelay = getRetryDelay(attempt, retryConfig);
+        yield { 
+          type: 'error', 
+          error: lastError, 
+          retrying: true, 
+          attempt 
+        };
+        yield { 
+          type: 'thinking', 
+          message: `请求失败，${Math.round(retryDelay / 1000)} 秒后重试 (${attempt + 1}/${retryConfig.maxRetries})...` 
+        };
+        
+        await delay(retryDelay);
       }
     }
     
+    // 如果没有成功获取 stream，抛出最后的错误
+    if (!stream!) {
+      throw lastError || new ApiError('未知错误', 'UNKNOWN', false);
+    }
+    
+    let fullContent = '';
+    const toolCalls: Map<number, { id: string; name: string; arguments: string }> = new Map();
+    
+    // 流式读取响应（带错误处理）
+    try {
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta;
+        
+        // 处理文本内容
+        if (delta?.content) {
+          fullContent += delta.content;
+          yield { type: 'content', content: delta.content };
+        }
+        
+        // 处理工具调用增量
+        if (delta?.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const index = tc.index;
+            
+            if (!toolCalls.has(index)) {
+              toolCalls.set(index, {
+                id: tc.id || '',
+                name: tc.function?.name || '',
+                arguments: '',
+              });
+            }
+            
+            const existing = toolCalls.get(index)!;
+            
+            if (tc.id) {
+              existing.id = tc.id;
+            }
+            if (tc.function?.name) {
+              existing.name = tc.function.name;
+            }
+            if (tc.function?.arguments) {
+              existing.arguments += tc.function.arguments;
+            }
+          }
+        }
+      }
+    } catch (streamError) {
+      const apiError = parseError(streamError);
+      yield { type: 'error', error: apiError, retrying: false, attempt: retryConfig.maxRetries };
+      throw apiError;
+    }
+    
     // 检查是否有工具调用
-    if (enableTools && toolExecutor && hasToolCall(fullResponse)) {
-      const toolCalls = parseToolCalls(fullResponse);
+    if (toolCalls.size > 0 && toolExecutor) {
+      // 构建 assistant 消息（包含 tool_calls）
+      const assistantToolCalls = Array.from(toolCalls.values()).map(tc => ({
+        id: tc.id,
+        type: 'function' as const,
+        function: {
+          name: tc.name,
+          arguments: tc.arguments,
+        },
+      }));
       
-      for (const toolCall of toolCalls) {
+      currentMessages.push({
+        role: 'assistant',
+        content: fullContent || null,
+        tool_calls: assistantToolCalls,
+      });
+      
+      // 实时更新 API 上下文（记录 assistant 的 tool_calls）
+      lastApiMessages = [...currentMessages];
+      
+      // 执行每个工具调用
+      for (const [_, tc] of toolCalls) {
+        let parsedArgs: Record<string, any> = {};
+        try {
+          parsedArgs = tc.arguments ? JSON.parse(tc.arguments) : {};
+        } catch (e) {
+          console.error('Failed to parse tool arguments:', e);
+        }
+        
+        const toolCall: ToolCall = {
+          id: tc.id,
+          name: tc.name,
+          arguments: parsedArgs,
+        };
+        
         yield { type: 'tool_call', toolCall };
-        yield { type: 'thinking', message: getToolStatusText(toolCall.name) };
+        yield { type: 'thinking', message: getToolStatusText(tc.name, parsedArgs) };
         
         // 执行工具
         const result = await toolExecutor(toolCall);
         yield { type: 'tool_result', result };
         
-        // 将工具结果添加到消息中，使用 tool 角色
-        currentMessages.push({
-          role: 'assistant',
-          content: fullResponse,
-        });
+        // 添加工具结果消息
         currentMessages.push({
           role: 'tool',
-          content: `<tool_result name="${result.name}">\n${result.result}\n</tool_result>\n\n请基于以上工具返回的内容回答我的问题。`,
-          toolName: result.name,
+          content: result.result,
+          tool_call_id: tc.id,
+          name: tc.name,
         });
+        
+        // 实时更新 API 上下文（记录 tool result）
+        lastApiMessages = [...currentMessages];
       }
       
       // 继续下一轮迭代
@@ -175,74 +457,25 @@ export async function* streamChat(
     }
     
     // 没有工具调用，结束循环
-    lastApiMessages = [...currentMessages, { role: 'assistant', content: fullResponse }];
+    lastApiMessages = [...currentMessages];
+    if (fullContent) {
+      lastApiMessages.push({ role: 'assistant', content: fullContent });
+    }
     break;
   }
   
   yield { type: 'done' };
 }
 
-// 内部函数：获取聊天完成
-async function* fetchChatCompletion(
-  provider: AIProvider,
-  messages: { role: string; content: string }[]
-): AsyncGenerator<string, void, unknown> {
-  const url = `${provider.baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${provider.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: provider.selectedModel,
-      messages,
-      stream: true,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
-  }
-
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error('No response body');
-
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const data = line.slice(6);
-        if (data === '[DONE]') {
-          return;
-        }
-        try {
-          const json = JSON.parse(data);
-          const content = json.choices?.[0]?.delta?.content;
-          if (content) {
-            yield content;
-          }
-        } catch {}
-      }
-    }
-  }
-}
-
-// 简化版本的流式聊天（向后兼容）
+// 简化版本的流式聊天（向后兼容，不使用工具）
 export async function* streamChatSimple(
   provider: AIProvider,
   messages: ChatMessage[],
-  pageContent?: string
+  pageContent?: string,
+  retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG
 ): AsyncGenerator<string, void, unknown> {
+  const client = createClient(provider);
+  
   const basePrompt = `You are a helpful AI assistant. Always respond using Markdown format for better readability. Use:
 - Headers (##, ###) for sections
 - **bold** and *italic* for emphasis
@@ -265,7 +498,49 @@ export async function* streamChatSimple(
 
   lastApiMessages = apiMessages;
 
-  for await (const chunk of fetchChatCompletion(provider, apiMessages)) {
-    yield chunk;
+  // 带重试的 API 调用
+  let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
+  
+  for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
+    const { controller, clear } = createTimeoutController(retryConfig.timeout);
+    
+    try {
+      stream = await client.chat.completions.create({
+        model: provider.selectedModel,
+        messages: convertToOpenAIMessages(apiMessages),
+        stream: true,
+      }, {
+        signal: controller.signal,
+      });
+      
+      clear();
+      break;
+      
+    } catch (error) {
+      clear();
+      const apiError = parseError(error);
+      
+      if (!apiError.retryable || attempt >= retryConfig.maxRetries) {
+        throw apiError;
+      }
+      
+      const retryDelay = getRetryDelay(attempt, retryConfig);
+      await delay(retryDelay);
+    }
+  }
+
+  if (!stream!) {
+    throw new ApiError('未知错误', 'UNKNOWN', false);
+  }
+
+  try {
+    for await (const chunk of stream) {
+      const content = chunk.choices[0]?.delta?.content;
+      if (content) {
+        yield content;
+      }
+    }
+  } catch (streamError) {
+    throw parseError(streamError);
   }
 }

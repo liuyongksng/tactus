@@ -645,3 +645,367 @@ body {
     width: 100%;
   }
 }
+
+
+/* ========== Skills 管理样式 ========== */
+
+/* Skill 信息区域 */
+.skill-info-section {
+  margin-bottom: 24px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.skill-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.skill-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(184, 134, 11, 0.1);
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+
+.skill-date {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.skill-description {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--foreground);
+  white-space: pre-wrap;
+}
+
+.skill-compat {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+}
+
+.compat-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+
+/* 脚本列表 */
+.script-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.script-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: all 200ms ease-out;
+}
+
+.script-item:hover {
+  border-color: var(--border-hover);
+}
+
+.script-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.script-info svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.script-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--foreground);
+}
+
+.script-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.trusted-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #2F855A;
+  background: rgba(47, 133, 90, 0.1);
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 200ms ease-out;
+}
+
+.trusted-badge:hover {
+  background: rgba(47, 133, 90, 0.2);
+}
+
+.untrusted-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.script-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+/* 资源列表 */
+.resource-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.resource-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--foreground);
+}
+
+.resource-item svg {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+/* 指令预览 */
+.instructions-preview {
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.instructions-preview pre {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--foreground);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+/* 空状态图标 */
+.empty-icon {
+  margin-bottom: 16px;
+  color: var(--muted-foreground);
+  opacity: 0.5;
+}
+
+/* 导入 Modal */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: var(--card);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  max-width: 500px;
+  width: 90%;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-header h3 {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.close-btn {
+  background: transparent;
+  border: none;
+  font-size: 24px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  transition: color 200ms ease-out;
+}
+
+.close-btn:hover {
+  color: var(--foreground);
+}
+
+.modal-body {
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.import-desc {
+  font-size: 14px;
+  color: var(--muted-foreground);
+  margin-bottom: 20px;
+  line-height: 1.6;
+}
+
+.import-desc code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--accent);
+}
+
+.import-area {
+  margin-bottom: 20px;
+}
+
+.import-area input[type="file"] {
+  display: none;
+}
+
+.import-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px;
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 200ms ease-out;
+  color: var(--muted-foreground);
+}
+
+.import-label:hover:not(.disabled) {
+  border-color: var(--accent);
+  background: rgba(184, 134, 11, 0.05);
+  color: var(--accent);
+}
+
+.import-label.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.import-label span {
+  font-size: 14px;
+}
+
+.import-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  color: var(--danger);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.import-warnings {
+  padding: 16px;
+  background: #FFFBEB;
+  border: 1px solid #F59E0B;
+  border-radius: 8px;
+  margin-bottom: 16px;
+}
+
+.warning-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #B45309;
+  margin-bottom: 8px;
+}
+
+.import-warnings ul {
+  margin: 0 0 12px 24px;
+  padding: 0;
+  font-size: 12px;
+  color: #92400E;
+}
+
+.import-warnings li {
+  margin-bottom: 4px;
+}
+
+.import-help {
+  padding: 16px;
+  background: var(--muted);
+  border-radius: 8px;
+}
+
+.import-help h4 {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+
+.import-help pre {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--foreground);
+  margin: 0;
+}

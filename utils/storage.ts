@@ -1,4 +1,12 @@
-import { storage } from '#imports';
+/**
+ * 存储层 - WXT Storage 用于需要跨页面同步的配置数据
+ * AI Providers 和 Trusted Scripts 使用 WXT storage（自动同步）
+ * 其他大数据继续使用 IndexedDB
+ */
+
+import { storage } from '@wxt-dev/storage';
+
+// ==================== 类型定义 ====================
 
 export interface AIProvider {
   id: string;
@@ -9,127 +17,54 @@ export interface AIProvider {
   selectedModel: string;
 }
 
-export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  timestamp: number;
-  pageContext?: string;
-  quote?: string;
+export interface TrustedScript {
+  skillId: string;
+  scriptName: string;
+  trustedAt: number;
 }
 
-export interface ApiMessageRecord {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
-  toolName?: string;
-}
+// ==================== Storage Items ====================
 
-export interface ChatSession {
-  id: string;
-  title: string;
-  messages: ChatMessage[];
-  apiMessages?: ApiMessageRecord[]; // 持久化的 API 上下文
-  createdAt: number;
-  updatedAt: number;
-  providerId?: string;
-}
-
-// Storage items
-export const providersStorage = storage.defineItem<AIProvider[]>('local:providers', {
+const providersStorage = storage.defineItem<AIProvider[]>('local:providers', {
   fallback: [],
 });
 
-export const activeProviderIdStorage = storage.defineItem<string | null>('local:activeProviderId', {
+const activeProviderIdStorage = storage.defineItem<string | null>('local:activeProviderId', {
   fallback: null,
 });
 
-export const currentSessionIdStorage = storage.defineItem<string | null>('local:currentSessionId', {
-  fallback: null,
-});
-
-export const chatSessionsStorage = storage.defineItem<ChatSession[]>('local:chatSessions', {
+const trustedScriptsStorage = storage.defineItem<TrustedScript[]>('local:trustedScripts', {
   fallback: [],
 });
 
-export const sharePageContentStorage = storage.defineItem<boolean>('local:sharePageContent', {
-  fallback: false,
-});
+// ==================== Watch Helpers ====================
 
-// Chat session helper functions
-export async function getAllSessions(): Promise<ChatSession[]> {
-  const sessions = await chatSessionsStorage.getValue();
-  // 确保每个 session 都有 messages 数组
-  return sessions
-    .map(s => ({ ...s, messages: s.messages || [] }))
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+export function watchProviders(callback: (providers: AIProvider[]) => void): () => void {
+  return providersStorage.watch((newValue) => {
+    callback(newValue);
+  });
 }
 
-export async function getSession(id: string): Promise<ChatSession | null> {
-  const sessions = await chatSessionsStorage.getValue();
-  return sessions.find(s => s.id === id) || null;
+export function watchActiveProviderId(callback: (id: string | null) => void): () => void {
+  return activeProviderIdStorage.watch((newValue) => {
+    callback(newValue);
+  });
 }
 
-export async function getCurrentSession(): Promise<ChatSession | null> {
-  const currentId = await currentSessionIdStorage.getValue();
-  if (!currentId) return null;
-  return getSession(currentId);
+// ==================== Providers ====================
+
+export async function getAllProviders(): Promise<AIProvider[]> {
+  return await providersStorage.getValue();
 }
 
-export async function createSession(providerId?: string): Promise<ChatSession> {
-  const session: ChatSession = {
-    id: crypto.randomUUID(),
-    title: '新对话',
-    messages: [],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    providerId,
-  };
-  const sessions = await chatSessionsStorage.getValue();
-  sessions.push(session);
-  await chatSessionsStorage.setValue(sessions);
-  await currentSessionIdStorage.setValue(session.id);
-  return session;
-}
-
-export async function updateSession(session: ChatSession): Promise<void> {
-  const sessions = await chatSessionsStorage.getValue();
-  const index = sessions.findIndex(s => s.id === session.id);
-  if (index >= 0) {
-    // 深拷贝 messages 确保数据正确保存
-    sessions[index] = { 
-      ...session, 
-      messages: JSON.parse(JSON.stringify(session.messages || [])),
-      updatedAt: Date.now() 
-    };
-    await chatSessionsStorage.setValue(sessions);
-  }
-}
-
-export async function deleteSession(id: string): Promise<void> {
-  const sessions = await chatSessionsStorage.getValue();
-  await chatSessionsStorage.setValue(sessions.filter(s => s.id !== id));
-  const currentId = await currentSessionIdStorage.getValue();
-  if (currentId === id) {
-    const remaining = await chatSessionsStorage.getValue();
-    await currentSessionIdStorage.setValue(remaining[0]?.id || null);
-  }
-}
-
-export async function generateSessionTitle(firstMessage: string): Promise<string> {
-  const maxLen = 20;
-  const title = firstMessage.replace(/\n/g, ' ').trim();
-  return title.length > maxLen ? title.substring(0, maxLen) + '...' : title;
-}
-
-// Helper functions
-export async function getActiveProvider(): Promise<AIProvider | null> {
+export async function getProvider(id: string): Promise<AIProvider | undefined> {
   const providers = await providersStorage.getValue();
-  const activeId = await activeProviderIdStorage.getValue();
-  return providers.find(p => p.id === activeId) || null;
+  return providers.find((p: AIProvider) => p.id === id);
 }
 
 export async function saveProvider(provider: AIProvider): Promise<void> {
   const providers = await providersStorage.getValue();
-  const index = providers.findIndex(p => p.id === provider.id);
+  const index = providers.findIndex((p: AIProvider) => p.id === provider.id);
   if (index >= 0) {
     providers[index] = provider;
   } else {
@@ -140,9 +75,72 @@ export async function saveProvider(provider: AIProvider): Promise<void> {
 
 export async function deleteProvider(id: string): Promise<void> {
   const providers = await providersStorage.getValue();
-  await providersStorage.setValue(providers.filter(p => p.id !== id));
+  await providersStorage.setValue(providers.filter((p: AIProvider) => p.id !== id));
+}
+
+export async function getActiveProvider(): Promise<AIProvider | null> {
   const activeId = await activeProviderIdStorage.getValue();
-  if (activeId === id) {
-    await activeProviderIdStorage.setValue(null);
+  if (!activeId) return null;
+  const provider = await getProvider(activeId);
+  return provider || null;
+}
+
+export async function setActiveProviderId(id: string | null): Promise<void> {
+  await activeProviderIdStorage.setValue(id);
+}
+
+// ==================== Trusted Scripts ====================
+
+export async function isScriptTrusted(skillId: string, scriptName: string): Promise<boolean> {
+  const scripts = await trustedScriptsStorage.getValue();
+  return scripts.some((s: TrustedScript) => s.skillId === skillId && s.scriptName === scriptName);
+}
+
+export async function trustScript(skillId: string, scriptName: string): Promise<void> {
+  const scripts = await trustedScriptsStorage.getValue();
+  if (!scripts.some((s: TrustedScript) => s.skillId === skillId && s.scriptName === scriptName)) {
+    scripts.push({ skillId, scriptName, trustedAt: Date.now() });
+    await trustedScriptsStorage.setValue(scripts);
   }
 }
+
+export async function untrustScript(skillId: string, scriptName: string): Promise<void> {
+  const scripts = await trustedScriptsStorage.getValue();
+  await trustedScriptsStorage.setValue(
+    scripts.filter((s: TrustedScript) => !(s.skillId === skillId && s.scriptName === scriptName))
+  );
+}
+
+export async function getTrustedScripts(): Promise<TrustedScript[]> {
+  return await trustedScriptsStorage.getValue();
+}
+
+// 删除某个 skill 的所有信任记录
+export async function removeTrustedScriptsBySkillId(skillId: string): Promise<void> {
+  const scripts = await trustedScriptsStorage.getValue();
+  await trustedScriptsStorage.setValue(scripts.filter((s: TrustedScript) => s.skillId !== skillId));
+}
+
+// ==================== 重新导出 IndexedDB 的其他功能 ====================
+
+export type {
+  ChatMessage,
+  ApiMessageRecord,
+  ChatSession,
+} from './db';
+
+export {
+  // Session functions
+  getAllSessions,
+  getSession,
+  getCurrentSession,
+  setCurrentSessionId,
+  createSession,
+  updateSession,
+  deleteSession,
+  generateSessionTitle,
+  
+  // Settings
+  getSharePageContent,
+  setSharePageContent,
+} from './db';

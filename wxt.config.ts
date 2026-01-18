@@ -6,7 +6,8 @@ export default defineConfig({
     name: 'TC Chrome Agent',
     description: 'AI Assistant with OpenAI-compatible API support',
     version: '1.0.0',
-    permissions: ['storage', 'activeTab', 'sidePanel', 'scripting'],
+    minimum_chrome_version: '120',
+    permissions: ['storage', 'unlimitedStorage', 'activeTab', 'sidePanel', 'scripting'],
     host_permissions: ['<all_urls>'],
     action: {
       default_title: 'TC Chrome Agent',

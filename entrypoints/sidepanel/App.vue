@@ -1,24 +1,32 @@
 <script setup lang="ts">
-import { ref, shallowRef, triggerRef, onMounted, nextTick, watch, computed } from 'vue';
+import { ref, shallowRef, triggerRef, onMounted, onUnmounted, nextTick, watch, computed } from 'vue';
 import { marked } from 'marked';
 import {
-  providersStorage,
-  activeProviderIdStorage,
-  sharePageContentStorage,
-  currentSessionIdStorage,
+  getAllProviders,
+  saveProvider as saveProviderToDB,
   getActiveProvider,
+  setActiveProviderId,
+  watchProviders,
+  watchActiveProviderId,
+  type AIProvider,
+} from '../../utils/storage';
+import {
+  getSharePageContent,
+  setSharePageContent,
+  setCurrentSessionId,
   getAllSessions,
   createSession,
   updateSession,
   deleteSession,
   generateSessionTitle,
-  type AIProvider,
   type ChatMessage,
   type ChatSession,
-} from '../../utils/storage';
-import { streamChat, getLastApiMessages, setLastApiMessages, type ToolExecutor, type StreamEvent, type ApiMessage } from '../../utils/api';
+} from '../../utils/db';
+import { streamChat, getLastApiMessages, setLastApiMessages, type ToolExecutor, type ApiMessage } from '../../utils/api';
 import { extractPageContent, truncateContent } from '../../utils/pageExtractor';
-import { removeToolCallMarkers, getToolStatusText, type ToolCall, type ToolResult } from '../../utils/tools';
+import { getToolStatusText, type ToolCall, type ToolResult, type SkillInfo } from '../../utils/tools';
+import { getAllSkills, getSkillByName, type Skill } from '../../utils/skills';
+import { executeScript, setScriptConfirmCallback, type ScriptConfirmationRequest } from '../../utils/skillsExecutor';
 
 // Configure marked for safe rendering
 marked.setOptions({
@@ -54,6 +62,14 @@ const showModelSelector = ref(false);
 // Debug state
 const showDebugModal = ref(false);
 const debugApiMessages = ref<ApiMessage[]>([]);
+
+// Skills state
+const installedSkills = ref<Skill[]>([]);
+const showScriptConfirmModal = ref(false);
+const pendingScriptConfirm = ref<{
+  request: ScriptConfirmationRequest;
+  resolve: (result: { confirmed: boolean; trustForever: boolean }) => void;
+} | null>(null);
 
 // Computed
 const activeProvider = computed(() => {
@@ -107,14 +123,39 @@ function formatSessionDate(timestamp: number): string {
 }
 
 // Initialize
+const unwatchProviders = ref<(() => void) | null>(null);
+const unwatchActiveProviderId = ref<(() => void) | null>(null);
+
 onMounted(async () => {
-  providers.value = await providersStorage.getValue();
-  activeProviderId.value = await activeProviderIdStorage.getValue();
-  sharePageContent.value = await sharePageContentStorage.getValue();
+  providers.value = await getAllProviders();
+  const activeProvider = await getActiveProvider();
+  activeProviderId.value = activeProvider?.id || null;
+  sharePageContent.value = await getSharePageContent();
   sessions.value = await getAllSessions();
+  
+  // 加载已安装的 Skills
+  installedSkills.value = await getAllSkills();
+  
+  // 设置脚本确认回调
+  setScriptConfirmCallback(async (request) => {
+    return new Promise((resolve) => {
+      pendingScriptConfirm.value = { request, resolve };
+      showScriptConfirmModal.value = true;
+    });
+  });
   
   currentSession.value = null;
   messages.value = [];
+
+  // 监听 providers 变化（跨页面同步）
+  unwatchProviders.value = watchProviders((newProviders) => {
+    providers.value = newProviders;
+  });
+  
+  // 监听 activeProviderId 变化（跨页面同步）
+  unwatchActiveProviderId.value = watchActiveProviderId((newId) => {
+    activeProviderId.value = newId;
+  });
 
   // Check for pending quote from content script
   const result = await browser.storage.local.get('pendingQuote');
@@ -123,25 +164,29 @@ onMounted(async () => {
     await browser.storage.local.remove('pendingQuote');
   }
 
-  // Listen for storage changes
+  // Listen for storage changes (for pendingQuote only)
   browser.storage.local.onChanged.addListener(async (changes) => {
     if (changes.pendingQuote?.newValue) {
       pendingQuote.value = changes.pendingQuote.newValue as string;
       browser.storage.local.remove('pendingQuote');
     }
-    // 监听 providers 变化，同步更新
-    if (changes['local:providers']) {
-      providers.value = await providersStorage.getValue();
-    }
-    if (changes['local:activeProviderId']) {
-      activeProviderId.value = await activeProviderIdStorage.getValue();
-    }
   });
+});
+
+// 清理 watchers
+onUnmounted(() => {
+  unwatchProviders.value?.();
+  unwatchActiveProviderId.value?.();
+  // 清理调试面板刷新定时器
+  if (debugRefreshTimer) {
+    clearInterval(debugRefreshTimer);
+    debugRefreshTimer = null;
+  }
 });
 
 // Watch share page content toggle
 watch(sharePageContent, async (val) => {
-  await sharePageContentStorage.setValue(val);
+  await setSharePageContent(val);
 });
 
 // Scroll to bottom
@@ -209,13 +254,87 @@ const toolExecutor: ToolExecutor = async (toolCall: ToolCall): Promise<ToolResul
     case 'extract_page_content': {
       const content = await extractCleanPageContent();
       return {
+        tool_call_id: toolCall.id,
         name: toolCall.name,
         result: content,
         success: true,
       };
     }
+    case 'activate_skill': {
+      const skillName = toolCall.arguments.skill_name;
+      const skill = await getSkillByName(skillName);
+      if (!skill) {
+        return {
+          tool_call_id: toolCall.id,
+          name: toolCall.name,
+          result: `未找到名为 "${skillName}" 的 Skill`,
+          success: false,
+        };
+      }
+      // 返回 Skill 的完整指令
+      const skillInfo = `# Skill: ${skill.metadata.name}
+
+## 描述
+${skill.metadata.description}
+
+## 指令
+${skill.instructions}
+
+## 可用脚本
+${skill.scripts.length > 0 
+  ? skill.scripts.map(s => `- ${s.name}`).join('\n')
+  : '无可用脚本'}
+
+## 引用文件
+${skill.references.length > 0 
+  ? skill.references.map(r => `- ${r.name}`).join('\n')
+  : '无引用文件'}`;
+      
+      return {
+        tool_call_id: toolCall.id,
+        name: toolCall.name,
+        result: skillInfo,
+        success: true,
+      };
+    }
+    case 'execute_skill_script': {
+      const skillName = toolCall.arguments.skill_name;
+      const scriptName = toolCall.arguments.script_name;
+      const scriptArgs = toolCall.arguments.arguments || {};
+      
+      const skill = await getSkillByName(skillName);
+      if (!skill) {
+        return {
+          tool_call_id: toolCall.id,
+          name: toolCall.name,
+          result: `未找到名为 "${skillName}" 的 Skill`,
+          success: false,
+        };
+      }
+      
+      const script = skill.scripts.find(s => s.name === scriptName);
+      if (!script) {
+        return {
+          tool_call_id: toolCall.id,
+          name: toolCall.name,
+          result: `Skill "${skillName}" 中未找到脚本 "${scriptName}"`,
+          success: false,
+        };
+      }
+      
+      const execResult = await executeScript({ skill, script, arguments: scriptArgs });
+      return {
+        tool_call_id: toolCall.id,
+        name: toolCall.name,
+        result: execResult.success 
+          ? JSON.stringify(execResult.output, null, 2)
+          : `脚本执行失败: ${execResult.error}`,
+        success: execResult.success,
+      };
+    }
     default:
       return {
+        tool_call_id: toolCall.id,
         name: toolCall.name,
         result: `未知工具: ${toolCall.name}`,
         success: false,
@@ -285,10 +404,39 @@ async function sendMessage() {
     const reactConfig = {
       enableTools: true, // 默认启用工具
       toolExecutor,
-      maxIterations: 3,
+      maxIterations: 10,
     };
 
-    for await (const event of streamChat(provider, messages.value.slice(0, -1), { sharePageContent: sharePageContent.value }, reactConfig)) {
+    // 构建 Skills 信息
+    const skillsInfo: SkillInfo[] = installedSkills.value.map(s => ({
+      name: s.metadata.name,
+      description: s.metadata.description,
+    }));
+
+    // 获取当前页面信息
+    let pageInfo: { domain: string; title: string; url: string } | undefined;
+    if (sharePageContent.value) {
+      try {
+        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+        if (tab?.url && tab?.title) {
+          const urlObj = new URL(tab.url);
+          pageInfo = {
+            domain: urlObj.hostname,
+            title: tab.title,
+            url: tab.url,
+          };
+        }
+      } catch (e) {
+        console.error('Failed to get page info:', e);
+      }
+    }
+
+    for await (const event of streamChat(
+      provider, 
+      messages.value.slice(0, -1), 
+      { sharePageContent: sharePageContent.value, skills: skillsInfo, pageInfo }, 
+      reactConfig
+    )) {
       switch (event.type) {
         case 'content':
           isLoading.value = false; // 收到内容后关闭 loading 状态
@@ -298,15 +446,14 @@ async function sendMessage() {
           break;
         case 'tool_call':
           isLoading.value = true; // 工具调用时显示 loading
-          toolStatus.value = getToolStatusText(event.toolCall.name);
+          toolStatus.value = getToolStatusText(event.toolCall.name, event.toolCall.arguments);
           break;
         case 'thinking':
           toolStatus.value = event.message;
           break;
         case 'tool_result':
-          // 工具执行完成，清除状态并清理工具调用标记
+          // 工具执行完成，清除状态
           toolStatus.value = null;
-          assistantMessage.content = removeToolCallMarkers(assistantMessage.content);
           if (assistantMessage.content && !assistantMessage.content.endsWith('\n')) {
             assistantMessage.content += '\n';
           }
@@ -314,8 +461,8 @@ async function sendMessage() {
           break;
         case 'done':
           toolStatus.value = null;
-          // 最终清理工具调用标记
-          assistantMessage.content = removeToolCallMarkers(assistantMessage.content).trim();
+          // 清理末尾空白
+          assistantMessage.content = assistantMessage.content.trim();
           break;
       }
     }
@@ -383,7 +530,7 @@ async function loadSession(session: ChatSession) {
   } else {
     setLastApiMessages([]);
   }
-  await currentSessionIdStorage.setValue(session.id);
+  await setCurrentSessionId(session.id);
   showHistory.value = false;
   scrollToBottom();
 }
@@ -413,23 +560,21 @@ function openSettings() {
 // Select provider and model
 async function selectProviderModel(providerId: string, model: string) {
   // 更新 provider 的 selectedModel
-  const provider = providers.value.find(p => p.id === providerId);
+  const provider = providers.value.find((p: AIProvider) => p.id === providerId);
   if (provider && provider.selectedModel !== model) {
     provider.selectedModel = model;
-    // 保存到 storage
-    const allProviders = await providersStorage.getValue();
-    const idx = allProviders.findIndex(p => p.id === providerId);
-    if (idx >= 0) {
-      allProviders[idx].selectedModel = model;
-      await providersStorage.setValue(allProviders);
-    }
+    // 保存到 IndexedDB
+    await saveProviderToDB(provider);
   }
   
   // 设置为当前活跃的 provider
   activeProviderId.value = providerId;
-  await activeProviderIdStorage.setValue(providerId);
+  await setActiveProviderId(providerId);
   showModelSelector.value = false;
 }
+
+// 调试面板实时刷新定时器
+let debugRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 // 查看调试信息
 function viewDebugMessages() {
@@ -440,12 +585,60 @@ function viewDebugMessages() {
     debugApiMessages.value = getLastApiMessages();
   }
   showDebugModal.value = true;
+  
+  // 启动实时刷新（每 500ms 更新一次）
+  if (debugRefreshTimer) {
+    clearInterval(debugRefreshTimer);
+  }
+  debugRefreshTimer = setInterval(() => {
+    // 只在加载中时实时刷新，避免不必要的更新
+    if (isLoading.value) {
+      debugApiMessages.value = getLastApiMessages();
+    }
+  }, 500);
+}
+
+// 关闭调试面板时停止刷新
+function closeDebugModal() {
+  showDebugModal.value = false;
+  if (debugRefreshTimer) {
+    clearInterval(debugRefreshTimer);
+    debugRefreshTimer = null;
+  }
 }
 
 // 复制调试信息到剪贴板
 function copyDebugMessages() {
   const text = JSON.stringify(debugApiMessages.value, null, 2);
   navigator.clipboard.writeText(text);
+}
+
+// 格式化 tool_calls 显示
+function formatToolCalls(toolCalls: Array<{ id: string; type: string; function: { name: string; arguments: string } }>): string {
+  return toolCalls.map(tc => {
+    let args = tc.function.arguments;
+    try {
+      args = JSON.stringify(JSON.parse(args), null, 2);
+    } catch {}
+    return `${tc.function.name}(${args})`;
+  }).join('\n');
+}
+
+// 脚本确认处理
+function confirmScript(trustForever: boolean) {
+  if (pendingScriptConfirm.value) {
+    pendingScriptConfirm.value.resolve({ confirmed: true, trustForever });
+    pendingScriptConfirm.value = null;
+    showScriptConfirmModal.value = false;
+  }
+}
+
+function rejectScript() {
+  if (pendingScriptConfirm.value) {
+    pendingScriptConfirm.value.resolve({ confirmed: false, trustForever: false });
+    pendingScriptConfirm.value = null;
+    showScriptConfirmModal.value = false;
+  }
 }
 </script>
 
@@ -616,7 +809,7 @@ function copyDebugMessages() {
     </div>
 
     <!-- Debug Modal -->
-    <div v-if="showDebugModal" class="modal-overlay" @click.self="showDebugModal = false">
+    <div v-if="showDebugModal" class="modal-overlay" @click.self="closeDebugModal">
       <div class="modal debug-modal">
         <div class="modal-header">
           <h2>API 上下文调试</h2>
@@ -628,7 +821,7 @@ function copyDebugMessages() {
               </svg>
               复制
             </button>
-            <button class="close-btn" @click="showDebugModal = false">×</button>
+            <button class="close-btn" @click="closeDebugModal">×</button>
           </div>
         </div>
         <div class="modal-body debug-body">
@@ -644,12 +837,49 @@ function copyDebugMessages() {
             >
               <div class="debug-role">
                 <template v-if="msg.role === 'tool'">
-                  🔧 tool{{ msg.toolName ? ` (${msg.toolName})` : '' }}
+                  🔧 tool{{ msg.name ? ` (${msg.name})` : '' }}
+                </template>
+                <template v-else-if="msg.role === 'assistant' && msg.tool_calls?.length">
+                  assistant → 调用工具
                 </template>
                 <template v-else>{{ msg.role }}</template>
               </div>
-              <pre class="debug-content">{{ msg.content }}</pre>
+              <pre v-if="msg.tool_calls?.length" class="debug-content debug-tool-calls">{{ formatToolCalls(msg.tool_calls) }}</pre>
+              <pre v-if="msg.content" class="debug-content">{{ msg.content }}</pre>
+              <div v-if="!msg.content && !msg.tool_calls?.length" class="debug-empty">(空)</div>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Script Confirm Modal -->
+    <div v-if="showScriptConfirmModal && pendingScriptConfirm" class="modal-overlay">
+      <div class="modal script-confirm-modal">
+        <div class="modal-header">
+          <h2>脚本执行确认</h2>
+        </div>
+        <div class="modal-body">
+          <div class="script-confirm-info">
+            <p>Skill <strong>{{ pendingScriptConfirm.request.skillName }}</strong> 请求执行以下脚本：</p>
+            <div class="script-name-display">{{ pendingScriptConfirm.request.scriptName }}</div>
+          </div>
+          <div class="script-preview">
+            <div class="script-preview-label">脚本内容预览</div>
+            <pre>{{ pendingScriptConfirm.request.scriptContent.slice(0, 500) }}{{ pendingScriptConfirm.request.scriptContent.length > 500 ? '...' : '' }}</pre>
+          </div>
+          <div class="script-confirm-warning">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <span>请确认脚本内容安全后再执行</span>
+          </div>
+          <div class="script-confirm-actions">
+            <button class="btn btn-outline" @click="rejectScript">取消</button>
+            <button class="btn btn-secondary" @click="confirmScript(false)">执行一次</button>
+            <button class="btn btn-primary" @click="confirmScript(true)">信任并执行</button>
           </div>
         </div>
       </div>
