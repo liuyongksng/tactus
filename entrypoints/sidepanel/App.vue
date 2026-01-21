@@ -26,7 +26,7 @@ import {
 import { streamChat, getLastApiMessages, setLastApiMessages, type ToolExecutor, type ApiMessage } from '../../utils/api';
 import { extractPageContent, truncateContent } from '../../utils/pageExtractor';
 import { getToolStatusText, type ToolCall, type ToolResult, type SkillInfo } from '../../utils/tools';
-import { getAllSkills, getSkillByName, type Skill } from '../../utils/skills';
+import { getAllSkills, getSkillByName, getSkillFileAsText, type Skill } from '../../utils/skills';
 import { executeScript, setScriptConfirmCallback, type ScriptConfirmationRequest } from '../../utils/skillsExecutor';
 
 // Configure marked for safe rendering
@@ -91,7 +91,8 @@ const activeModelName = computed(() => {
 const allModelOptions = computed(() => {
   const options: { providerId: string; providerName: string; model: string }[] = [];
   for (const p of providers.value) {
-    for (const m of p.models) {
+    const models = Array.isArray(p.models) ? p.models : [];
+    for (const m of models) {
       options.push({
         providerId: p.id,
         providerName: p.name,
@@ -269,11 +270,13 @@ const toolExecutor: ToolExecutor = async (toolCall: ToolCall): Promise<ToolResul
   switch (toolCall.name) {
     case 'extract_page_content': {
       const content = await extractCleanPageContent();
+      // 检查是否是错误消息
+      const isError = content.startsWith('无法获取') || content.startsWith('提取页面内容失败');
       return {
         tool_call_id: toolCall.id,
         name: toolCall.name,
         result: content,
-        success: true,
+        success: !isError,
       };
     }
     case 'activate_skill': {
@@ -298,12 +301,12 @@ ${skill.instructions}
 
 ## 可用脚本
 ${skill.scripts.length > 0 
-  ? skill.scripts.map(s => `- ${s.name}`).join('\n')
+  ? skill.scripts.map(s => `- ${s.path}`).join('\n')
   : '无可用脚本'}
 
 ## 引用文件
 ${skill.references.length > 0 
-  ? skill.references.map(r => `- ${r.name}`).join('\n')
+  ? skill.references.map(r => `- ${r.path}`).join('\n')
   : '无引用文件'}`;
       
       return {
@@ -315,7 +318,7 @@ ${skill.references.length > 0
     }
     case 'execute_skill_script': {
       const skillName = toolCall.arguments.skill_name;
-      const scriptName = toolCall.arguments.script_name;
+      const scriptPath = toolCall.arguments.script_path;
       const scriptArgs = toolCall.arguments.arguments || {};
       
       const skill = await getSkillByName(skillName);
@@ -328,12 +331,12 @@ ${skill.references.length > 0
         };
       }
       
-      const script = skill.scripts.find(s => s.name === scriptName);
+      const script = skill.scripts.find(s => s.path === scriptPath);
       if (!script) {
         return {
           tool_call_id: toolCall.id,
           name: toolCall.name,
-          result: `Skill "${skillName}" 中未找到脚本 "${scriptName}"`,
+          result: `Skill "${skillName}" 中未找到脚本 "${scriptPath}"`,
           success: false,
         };
       }
@@ -346,6 +349,37 @@ ${skill.references.length > 0
           ? JSON.stringify(execResult.output, null, 2)
           : `脚本执行失败: ${execResult.error}`,
         success: execResult.success,
+      };
+    }
+    case 'read_skill_file': {
+      const skillName = toolCall.arguments.skill_name;
+      const filePath = toolCall.arguments.file_path;
+      
+      const skill = await getSkillByName(skillName);
+      if (!skill) {
+        return {
+          tool_call_id: toolCall.id,
+          name: toolCall.name,
+          result: `未找到名为 "${skillName}" 的 Skill`,
+          success: false,
+        };
+      }
+      
+      const content = await getSkillFileAsText(skill.id, filePath);
+      if (content === null) {
+        return {
+          tool_call_id: toolCall.id,
+          name: toolCall.name,
+          result: `文件 "${filePath}" 不存在或不是文本文件`,
+          success: false,
+        };
+      }
+      
+      return {
+        tool_call_id: toolCall.id,
+        name: toolCall.name,
+        result: content,
+        success: true,
       };
     }
     default:
@@ -617,12 +651,36 @@ function openSettings() {
 
 // Select provider and model
 async function selectProviderModel(providerId: string, model: string) {
-  // 更新 provider 的 selectedModel
-  const provider = providers.value.find((p: AIProvider) => p.id === providerId);
-  if (provider && provider.selectedModel !== model) {
-    provider.selectedModel = model;
-    // 保存到 IndexedDB
-    await saveProviderToDB(provider);
+  // 从 storage 重新获取最新的 provider 数据，避免使用可能不完整的内存数据
+  const { getProvider } = await import('../../utils/storage');
+  const freshProvider = await getProvider(providerId);
+  
+  if (!freshProvider) {
+    console.error('Provider not found in storage:', providerId);
+    return;
+  }
+  
+  // 验证 provider 数据完整性
+  if (!Array.isArray(freshProvider.models) || freshProvider.models.length === 0) {
+    console.error('Provider data corrupted, skipping save:', freshProvider);
+    return;
+  }
+  
+  // 验证要选择的模型确实存在于 provider 的模型列表中
+  if (!freshProvider.models.includes(model)) {
+    console.error('Model not found in provider:', model, freshProvider.models);
+    return;
+  }
+  
+  // 只有当模型确实改变时才保存
+  if (freshProvider.selectedModel !== model) {
+    freshProvider.selectedModel = model;
+    await saveProviderToDB(freshProvider);
+    // 更新本地状态
+    const localProvider = providers.value.find((p: AIProvider) => p.id === providerId);
+    if (localProvider) {
+      localProvider.selectedModel = model;
+    }
   }
   
   // 设置为当前活跃的 provider
@@ -909,8 +967,8 @@ function rejectScript() {
                 </template>
                 <template v-else>{{ msg.role }}</template>
               </div>
-              <pre v-if="msg.tool_calls?.length" class="debug-content debug-tool-calls">{{ formatToolCalls(msg.tool_calls) }}</pre>
               <pre v-if="msg.content" class="debug-content">{{ msg.content }}</pre>
+              <pre v-if="msg.tool_calls?.length" class="debug-content debug-tool-calls">{{ formatToolCalls(msg.tool_calls) }}</pre>
               <div v-if="!msg.content && !msg.tool_calls?.length" class="debug-empty">(空)</div>
             </div>
           </div>

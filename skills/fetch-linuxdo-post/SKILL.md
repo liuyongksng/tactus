@@ -24,7 +24,7 @@ description: 获取 linux.do 帖子的正文及评论区内容，并解析评论
 ```json
 { 
   "skill_name": "fetch-linuxdo-post", 
-  "script_name": "fetch-post.js",
+  "script_path": "scripts/fetch-post.js",
   "arguments": { "topicId": 12345 }
 }
 ```

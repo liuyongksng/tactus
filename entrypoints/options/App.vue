@@ -74,7 +74,7 @@ function selectProvider(id: string) {
     formName.value = provider.name;
     formBaseUrl.value = provider.baseUrl;
     formApiKey.value = provider.apiKey;
-    formModels.value = [...(provider.models || [])];
+    formModels.value = Array.isArray(provider.models) ? [...provider.models] : [];
     formCustomModel.value = '';
     availableModels.value = [];
   }
@@ -273,7 +273,7 @@ function formatDate(timestamp: number): string {
               <div v-for="p in providers" :key="p.id" class="provider-item" :class="{ selected: p.id === selectedProviderId }" @click="selectProvider(p.id)">
                 <div class="provider-info">
                   <div class="provider-name">{{ p.name }}</div>
-                  <div class="provider-model">{{ (p.models || []).length }} 个模型</div>
+                  <div class="provider-model">{{ (Array.isArray(p.models) ? p.models : []).length }} 个模型</div>
                 </div>
               </div>
               <div v-if="providers.length === 0" class="empty-list">暂无服务商配置</div>
@@ -290,7 +290,7 @@ function formatDate(timestamp: number): string {
               <div class="form-body">
                 <div class="form-group">
                   <label>服务商名称</label>
-                  <input v-model="formName" placeholder="例如：OpenAI, Claude, DeepSeek" />
+                  <input v-model="formName" placeholder="例如：OpenAI, DeepSeek" />
                 </div>
                 <div class="form-group">
                   <label>Base URL</label>
@@ -416,7 +416,7 @@ function formatDate(timestamp: number): string {
                   </div>
                 </div>
                 <div class="form-group">
-                  <label>指令内容</label>
+                  <label>指令预览</label>
                   <div class="instructions-preview">
                     <pre>{{ selectedSkill.instructions.slice(0, 500) }}{{ selectedSkill.instructions.length > 500 ? '...' : '' }}</pre>
                   </div>

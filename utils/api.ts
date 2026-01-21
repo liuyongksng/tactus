@@ -55,6 +55,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   'MODEL_NOT_FOUND': '模型不存在或无权访问，请检查模型配置',
   'INVALID_REQUEST': '请求参数错误，请检查输入内容',
   'SERVER_ERROR': '服务器内部错误，请稍后重试',
+  'TOOL_PARSE_ERROR': '工具调用参数解析失败，已达最大重试次数',
+  'TOOL_EXECUTION_ERROR': '工具执行失败，已达最大重试次数',
   'UNKNOWN': '发生未知错误，请稍后重试',
 };
 
@@ -167,6 +169,7 @@ function createClient(provider: AIProvider): OpenAI {
     apiKey: provider.apiKey,
     baseURL: `${provider.baseUrl.replace(/\/$/, '')}/v1`,
     dangerouslyAllowBrowser: true, // 浏览器扩展环境需要
+    maxRetries: 0, // 禁用 SDK 内置重试，由代码层统一控制
   });
 }
 
@@ -207,6 +210,28 @@ export type StreamEvent =
   | { type: 'thinking'; message: string }
   | { type: 'error'; error: ApiError; retrying: boolean; attempt: number }
   | { type: 'done' };
+
+// 检查 JSON 对象字符串是否已经闭合（大括号匹配）
+// 用于处理某些模型（如 GLM-4.7）对无参数工具重复返回 "{}" 的情况
+function isJsonClosed(str: string): boolean {
+  if (!str) return false;
+  
+  let braceCount = 0;
+  let inString = false;
+  
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    
+    if (char === '"' && str[i - 1] !== '\\') {
+      inString = !inString;
+    } else if (!inString) {
+      if (char === '{') braceCount++;
+      else if (char === '}') braceCount--;
+    }
+  }
+  
+  return braceCount === 0 && str.includes('{');
+}
 
 // 转换工具格式
 function convertTools(tools: FunctionTool[]): ChatCompletionTool[] {
@@ -286,6 +311,8 @@ export async function* streamChat(
   
   let iteration = 0;
   let currentMessages = [...apiMessages];
+  let toolCallRetryCount = 0; // 工具调用重试计数（包括参数解析错误）
+  const maxToolCallRetries = 3; // 工具调用最大重试次数
   
   while (iteration < maxIterations) {
     iteration++;
@@ -351,7 +378,22 @@ export async function* streamChat(
     }
     
     let fullContent = '';
-    const toolCalls: Map<number, { id: string; name: string; arguments: string }> = new Map();
+    
+    // 工具调用收集器
+    // 使用 id 作为主键来存储工具调用，这样更健壮
+    // 
+    // 背景说明：
+    // OpenAI 流式响应中，tool_calls 有两个标识字段：
+    // - index: 流式传输时的"槽位编号"，用于拼接同一个工具调用的多个 chunks
+    // - id: 工具调用的唯一标识符，用于后续提交工具执行结果时匹配
+    // 
+    // 正常情况下，一个 index 只对应一个 id。但某些兼容层（如 newapi）
+    // 可能在同一个 index 下返回多个不同 id 的工具调用，导致 arguments 被错误拼接。
+    // 
+    // 解决方案：
+    // 使用 Map<index, Map<id, toolCall>> 的双层结构，
+    // 当同一个 index 出现新的 id 时，创建新的工具调用条目而不是累加 arguments。
+    const toolCallsByIndex: Map<number, Map<string, { id: string; name: string; arguments: string }>> = new Map();
     
     // 流式读取响应（带错误处理）
     try {
@@ -369,24 +411,52 @@ export async function* streamChat(
           for (const tc of delta.tool_calls) {
             const index = tc.index;
             
-            if (!toolCalls.has(index)) {
-              toolCalls.set(index, {
-                id: tc.id || '',
-                name: tc.function?.name || '',
-                arguments: '',
-              });
+            // 确保该 index 的 Map 存在
+            if (!toolCallsByIndex.has(index)) {
+              toolCallsByIndex.set(index, new Map());
             }
+            const indexMap = toolCallsByIndex.get(index)!;
             
-            const existing = toolCalls.get(index)!;
-            
+            // 如果有新的 id，说明是新的工具调用（即使 index 相同）
+            // 这处理了某些 API 兼容层在同一 index 下返回多个工具调用的情况
             if (tc.id) {
-              existing.id = tc.id;
-            }
-            if (tc.function?.name) {
-              existing.name = tc.function.name;
-            }
-            if (tc.function?.arguments) {
-              existing.arguments += tc.function.arguments;
+              if (!indexMap.has(tc.id)) {
+                // 新的工具调用
+                indexMap.set(tc.id, {
+                  id: tc.id,
+                  name: tc.function?.name || '',
+                  arguments: tc.function?.arguments || '',
+                });
+              } else {
+                // 已存在的工具调用，更新信息
+                const existing = indexMap.get(tc.id)!;
+                if (tc.function?.name) {
+                  existing.name = tc.function.name;
+                }
+                if (tc.function?.arguments) {
+                  // 检查现有 arguments 是否已经是闭合的 JSON
+                  // 这处理了 GLM-4.7 等模型对无参数工具返回多次 "{}" 的情况
+                  if (!isJsonClosed(existing.arguments)) {
+                    existing.arguments += tc.function.arguments;
+                  }
+                }
+              }
+            } else {
+              // 没有 id 的 chunk，找到该 index 下最后一个工具调用并累加
+              // （正常流式传输时，后续 chunks 不会重复发送 id）
+              const entries = Array.from(indexMap.values());
+              if (entries.length > 0) {
+                const lastEntry = entries[entries.length - 1];
+                if (tc.function?.name) {
+                  lastEntry.name = tc.function.name;
+                }
+                if (tc.function?.arguments) {
+                  // 同样检查是否已闭合
+                  if (!isJsonClosed(lastEntry.arguments)) {
+                    lastEntry.arguments += tc.function.arguments;
+                  }
+                }
+              }
             }
           }
         }
@@ -397,10 +467,61 @@ export async function* streamChat(
       throw apiError;
     }
     
+    // 将双层 Map 扁平化为工具调用数组
+    const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
+    for (const indexMap of toolCallsByIndex.values()) {
+      for (const tc of indexMap.values()) {
+        if (tc.id && tc.name) {
+          toolCalls.push(tc);
+        }
+      }
+    }
+    
     // 检查是否有工具调用
-    if (toolCalls.size > 0 && toolExecutor) {
+    if (toolCalls.length > 0 && toolExecutor) {
+      // 检查是否有参数解析错误
+      // 如果有解析错误，剔除本次模型回复，直接重试
+      let hasParseError = false;
+      for (const tc of toolCalls) {
+        try {
+          if (tc.arguments) JSON.parse(tc.arguments);
+        } catch (e) {
+          hasParseError = true;
+          console.error('[Tool Args Parse Error] 工具参数解析失败，将剔除本次模型回复并重试');
+          console.error('  工具名:', tc.name);
+          console.error('  原始参数:', tc.arguments);
+          console.error('  错误:', e);
+          break;
+        }
+      }
+      
+      // 如果有解析错误，剔除本次模型回复，直接重试
+      if (hasParseError) {
+        toolCallRetryCount++;
+        console.warn(`[Retry] 检测到工具参数解析错误，剔除模型回复后重试 (${toolCallRetryCount}/${maxToolCallRetries})`);
+        
+        // 检查是否超过最大重试次数
+        if (toolCallRetryCount >= maxToolCallRetries) {
+          const error = new ApiError(
+            `工具调用失败：参数解析错误，已重试 ${maxToolCallRetries} 次`,
+            'TOOL_PARSE_ERROR',
+            false
+          );
+          yield { type: 'error', error, retrying: false, attempt: toolCallRetryCount };
+          throw error;
+        }
+        
+        yield { 
+          type: 'thinking', 
+          message: `工具参数解析错误，正在重试 (${toolCallRetryCount}/${maxToolCallRetries})...` 
+        };
+        
+        // 不添加本次 assistant 消息到 currentMessages，直接重试
+        continue;
+      }
+      
       // 构建 assistant 消息（包含 tool_calls）
-      const assistantToolCalls = Array.from(toolCalls.values()).map(tc => ({
+      const assistantToolCalls = toolCalls.map(tc => ({
         id: tc.id,
         type: 'function' as const,
         function: {
@@ -419,13 +540,9 @@ export async function* streamChat(
       lastApiMessages = [...currentMessages];
       
       // 执行每个工具调用
-      for (const [_, tc] of toolCalls) {
-        let parsedArgs: Record<string, any> = {};
-        try {
-          parsedArgs = tc.arguments ? JSON.parse(tc.arguments) : {};
-        } catch (e) {
-          console.error('Failed to parse tool arguments:', e);
-        }
+      let hasExecutionError = false;
+      for (const tc of toolCalls) {
+        const parsedArgs = JSON.parse(tc.arguments || '{}');
         
         const toolCall: ToolCall = {
           id: tc.id,
@@ -440,6 +557,34 @@ export async function* streamChat(
         const result = await toolExecutor(toolCall);
         yield { type: 'tool_result', result };
         
+        // 检查工具执行是否失败
+        if (!result.success) {
+          hasExecutionError = true;
+          toolCallRetryCount++;
+          console.warn(`[Tool Execution Error] 工具执行失败 (${toolCallRetryCount}/${maxToolCallRetries})`);
+          console.error('  工具名:', tc.name);
+          console.error('  错误:', result.result);
+          
+          // 检查是否超过最大重试次数
+          if (toolCallRetryCount >= maxToolCallRetries) {
+            const error = new ApiError(
+              `工具执行失败：${result.result}，已重试 ${maxToolCallRetries} 次`,
+              'TOOL_EXECUTION_ERROR',
+              false
+            );
+            yield { type: 'error', error, retrying: false, attempt: toolCallRetryCount };
+            throw error;
+          }
+          
+          yield { 
+            type: 'thinking', 
+            message: `工具执行失败，正在重试 (${toolCallRetryCount}/${maxToolCallRetries})...` 
+          };
+          
+          // 跳出工具执行循环，准备重试
+          break;
+        }
+        
         // 添加工具结果消息
         currentMessages.push({
           role: 'tool',
@@ -450,6 +595,13 @@ export async function* streamChat(
         
         // 实时更新 API 上下文（记录 tool result）
         lastApiMessages = [...currentMessages];
+      }
+      
+      // 如果有执行错误，剔除本次 assistant 消息，重试
+      if (hasExecutionError) {
+        // 移除刚才添加的 assistant 消息
+        currentMessages.pop();
+        continue;
       }
       
       // 继续下一轮迭代

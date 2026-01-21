@@ -41,6 +41,7 @@ const toolStatusTexts: ToolStatusMap = {
   extract_page_content: '正在提取网页内容...',
   activate_skill: '正在激活 Skill...',
   execute_skill_script: '正在执行脚本...',
+  read_skill_file: '正在读取文件...',
 };
 
 // 工具状态提示文本（动态，带参数）
@@ -57,8 +58,13 @@ function getDynamicToolStatusText(
       }
       break;
     case 'execute_skill_script':
-      if (args.skill_name && args.script_name) {
-        return `正在执行脚本: ${args.skill_name}/${args.script_name}...`;
+      if (args.skill_name && args.script_path) {
+        return `正在执行脚本: ${args.skill_name}/${args.script_path}...`;
+      }
+      break;
+    case 'read_skill_file':
+      if (args.skill_name && args.file_path) {
+        return `正在读取文件: ${args.skill_name}/${args.file_path}...`;
       }
       break;
   }
@@ -71,7 +77,7 @@ export const availableTools: FunctionTool[] = [
     type: 'function',
     function: {
       name: 'extract_page_content',
-      description: '提取并清洗当前网页的主要内容，返回包含标题、作者、来源等元数据的结构化 Markdown 格式文本。当用户询问关于当前页面的问题时，必须先调用此工具获取页面内容。',
+      description: '提取并清洗当前网页的主要内容，返回包含标题、作者、来源等元数据的结构化 Markdown 格式文本。当用户询问关于当前页面的问题时，需要调用此工具获取页面内容。',
       parameters: {
         type: 'object',
         properties: {},
@@ -104,10 +110,26 @@ export const availableTools: FunctionTool[] = [
         type: 'object',
         properties: {
           skill_name: { type: 'string', description: 'Skill 的名称' },
-          script_name: { type: 'string', description: '脚本文件名' },
+          script_path: { type: 'string', description: '脚本文件路径' },
           arguments: { type: 'object', description: '传递给脚本的参数对象（可选），脚本中通过 __args__ 获取' },
         },
-        required: ['skill_name', 'script_name'],
+        required: ['skill_name', 'script_path'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_skill_file',
+      description: '读取 Skill 中的引用文件。可读取 references/ 目录下的引用文件（如文档、配置模板）或 assets/ 目录下的文本资源。仅支持文本文件。',
+      parameters: {
+        type: 'object',
+        properties: {
+          skill_name: { type: 'string', description: 'Skill 的名称' },
+          file_path: { type: 'string', description: '引用文件路径' },
+        },
+        required: ['skill_name', 'file_path'],
         additionalProperties: false,
       },
     },
@@ -148,7 +170,7 @@ export function getFilteredTools(context?: {
     }
     
     // 如果没有 skills，禁用 skill 相关工具
-    if ((toolName === 'activate_skill' || toolName === 'execute_skill_script')) {
+    if ((toolName === 'activate_skill' || toolName === 'execute_skill_script' || toolName === 'read_skill_file')) {
       return context?.skills && context.skills.length > 0;
     }
     
