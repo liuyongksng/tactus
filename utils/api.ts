@@ -143,6 +143,7 @@ function createTimeoutController(timeout: number): { controller: AbortController
 export interface ApiMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | null;
+  reasoning?: string | null;  // 思维链内容（如 DeepSeek reasoning_content）
   tool_calls?: Array<{
     id: string;
     type: 'function';
@@ -205,6 +206,7 @@ export interface FunctionCallingConfig {
 // 流式聊天事件类型
 export type StreamEvent = 
   | { type: 'content'; content: string }
+  | { type: 'reasoning'; content: string }  // 思维链内容（如 DeepSeek reasoning_content）
   | { type: 'tool_call'; toolCall: ToolCall }
   | { type: 'tool_result'; result: ToolResult }
   | { type: 'thinking'; message: string }
@@ -378,6 +380,7 @@ export async function* streamChat(
     }
     
     let fullContent = '';
+    let fullReasoning = '';  // 思维链内容（如 DeepSeek reasoning_content）
     
     // 工具调用收集器
     // 使用 id 作为主键来存储工具调用，这样更健壮
@@ -399,6 +402,14 @@ export async function* streamChat(
     try {
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta;
+        
+        // 处理思维链内容（DeepSeek reasoning_content）
+        // 某些模型（如 DeepSeek-R1）会在 delta 中返回 reasoning_content 字段
+        const reasoningContent = (delta as any)?.reasoning_content;
+        if (reasoningContent) {
+          fullReasoning += reasoningContent;
+          yield { type: 'reasoning', content: reasoningContent };
+        }
         
         // 处理文本内容
         if (delta?.content) {
@@ -520,7 +531,7 @@ export async function* streamChat(
         continue;
       }
       
-      // 构建 assistant 消息（包含 tool_calls）
+      // 构建 assistant 消息（包含 tool_calls 和 reasoning）
       const assistantToolCalls = toolCalls.map(tc => ({
         id: tc.id,
         type: 'function' as const,
@@ -533,6 +544,7 @@ export async function* streamChat(
       currentMessages.push({
         role: 'assistant',
         content: fullContent || null,
+        reasoning: fullReasoning || null,
         tool_calls: assistantToolCalls,
       });
       
@@ -610,8 +622,12 @@ export async function* streamChat(
     
     // 没有工具调用，结束循环
     lastApiMessages = [...currentMessages];
-    if (fullContent) {
-      lastApiMessages.push({ role: 'assistant', content: fullContent });
+    if (fullContent || fullReasoning) {
+      lastApiMessages.push({ 
+        role: 'assistant', 
+        content: fullContent || null,
+        reasoning: fullReasoning || null,
+      });
     }
     break;
   }

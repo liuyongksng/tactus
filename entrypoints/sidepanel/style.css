@@ -304,7 +304,7 @@ body {
 }
 
 .model-selector-btn .model-name {
-  max-width: 100px;
+  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1206,6 +1206,48 @@ body {
   border-radius: 2px;
 }
 
+/* Debug Reasoning Styles (思维链调试样式) */
+.debug-reasoning {
+  border-top: 1px solid var(--border);
+}
+
+.debug-reasoning-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(184, 134, 11, 0.08);
+  border-bottom: 1px solid var(--border);
+}
+
+.debug-reasoning-label svg {
+  color: var(--accent);
+}
+
+.debug-reasoning-content {
+  background: rgba(184, 134, 11, 0.04);
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border);
+}
+
+.debug-tool-calls {
+  background: transparent;
+}
+
+.debug-empty {
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
 
 /* ========== Script Confirm Modal ========== */
 .script-confirm-modal {
@@ -1303,4 +1345,147 @@ body {
   background: var(--muted);
   border-color: var(--border-hover);
   color: var(--foreground);
+}
+
+
+/* ========== Reasoning Section (思维链) ========== */
+.reasoning-section {
+  margin-bottom: 12px;
+}
+
+.reasoning-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted-foreground);
+  transition: all 200ms ease-out;
+  width: 100%;
+  text-align: left;
+}
+
+.reasoning-toggle:hover {
+  background: var(--card);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.reasoning-toggle.expanded {
+  border-color: var(--accent);
+  background: var(--card);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom: none;
+}
+
+.reasoning-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.reasoning-label {
+  flex: 1;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+}
+
+.reasoning-chevron {
+  flex-shrink: 0;
+  transition: transform 200ms ease-out;
+}
+
+.reasoning-toggle.expanded .reasoning-chevron {
+  transform: rotate(180deg);
+}
+
+.reasoning-content {
+  background: var(--card);
+  border: 1px solid var(--accent);
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  padding: 14px 16px;
+  max-height: 300px;
+  overflow-y: auto;
+  animation: slideDown 200ms ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 300px;
+    padding-top: 14px;
+    padding-bottom: 14px;
+  }
+}
+
+.reasoning-text {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--muted-foreground);
+}
+
+.reasoning-text p {
+  margin: 0.5em 0;
+}
+
+.reasoning-text p:first-child {
+  margin-top: 0;
+}
+
+.reasoning-text p:last-child {
+  margin-bottom: 0;
+}
+
+.reasoning-text code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--muted);
+  padding: 0.15em 0.35em;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+.reasoning-text pre {
+  background: #1A1A1A;
+  color: #E8E4DF;
+  padding: 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.75em 0;
+  font-size: 0.85em;
+}
+
+.reasoning-text pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.reasoning-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.reasoning-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.reasoning-content::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.reasoning-content::-webkit-scrollbar-thumb:hover {
+  background: var(--border-hover);
 }

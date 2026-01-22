@@ -64,6 +64,7 @@ export interface ChatMessage {
   timestamp: number;
   pageContext?: string;
   quote?: string;
+  reasoning?: string;  // 思维链内容（如 DeepSeek reasoning_content）
 }
 
 export interface ApiMessageRecord {

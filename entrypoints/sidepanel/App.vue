@@ -68,7 +68,13 @@ const showModelSelector = ref(false);
 const showDebugModal = ref(false);
 const debugApiMessages = ref<ApiMessage[]>([]);
 
-// Skills state
+// 思维链折叠状态（按消息索引存储）
+const reasoningExpanded = ref<Record<number, boolean>>({});
+
+// 切换思维链展开/折叠
+function toggleReasoning(idx: number) {
+  reasoningExpanded.value[idx] = !reasoningExpanded.value[idx];
+}// Skills state
 const installedSkills = ref<Skill[]>([]);
 const showScriptConfirmModal = ref(false);
 const pendingScriptConfirm = ref<{
@@ -84,7 +90,8 @@ const activeProvider = computed(() => {
 const activeModelName = computed(() => {
   if (!activeProvider.value) return '未配置';
   const model = activeProvider.value.selectedModel;
-  return model.length > 12 ? model.substring(0, 12) + '...' : model;
+  // return model.length > 12 ? model.substring(0, 12) + '...' : model;
+  return model;
 });
 
 // 构建所有可选的模型列表（供应商+模型组合）
@@ -524,6 +531,14 @@ async function sendMessage() {
       reactConfig
     )) {
       switch (event.type) {
+        case 'reasoning':
+          // 思维链内容（如 DeepSeek reasoning_content）
+          if (!assistantMessage.reasoning) {
+            assistantMessage.reasoning = '';
+          }
+          assistantMessage.reasoning += event.content;
+          triggerRef(messages);
+          break;
         case 'content':
           isLoading.value = false; // 收到内容后关闭 loading 状态
           assistantMessage.content += event.content;
@@ -549,6 +564,9 @@ async function sendMessage() {
           toolStatus.value = null;
           // 清理末尾空白
           assistantMessage.content = assistantMessage.content.trim();
+          if (assistantMessage.reasoning) {
+            assistantMessage.reasoning = assistantMessage.reasoning.trim();
+          }
           break;
       }
     }
@@ -805,19 +823,55 @@ function rejectScript() {
         </p>
       </div>
 
-      <div
-        v-for="(msg, idx) in messages"
-        :key="idx"
-        class="message"
-        :class="msg.role"
-      >
-        <div v-if="msg.content" class="message-time">{{ formatTime(msg.timestamp) }}</div>
-        <div v-if="msg.quote" class="quote">"{{ msg.quote }}"</div>
-        <div v-if="msg.role === 'assistant'" class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
-        <div v-else v-html="msg.content.replace(/\n/g, '<br>')"></div>
-      </div>
+      <template v-for="(msg, idx) in messages" :key="idx">
+        <!-- 在最后一条 assistant 消息上方显示 loading 状态 -->
+        <div 
+          v-if="isLoading && msg.role === 'assistant' && idx === messages.length - 1" 
+          class="loading"
+        >
+          <div class="loading-dots">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <span v-if="toolStatus">{{ toolStatus }}</span>
+          <span v-else>思考中...</span>
+        </div>
 
-      <div v-if="isLoading" class="loading">
+        <div class="message" :class="msg.role">
+          <div v-if="msg.content || msg.reasoning" class="message-time">{{ formatTime(msg.timestamp) }}</div>
+          <div v-if="msg.quote" class="quote">"{{ msg.quote }}"</div>
+          
+          <!-- 思维链折叠区域 -->
+          <div v-if="msg.reasoning" class="reasoning-section">
+            <button 
+              class="reasoning-toggle"
+              @click="toggleReasoning(idx)"
+              :class="{ expanded: reasoningExpanded[idx] }"
+            >
+              <svg class="reasoning-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+              </svg>
+              <span class="reasoning-label">思维链</span>
+              <svg class="reasoning-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M6 9l6 6 6-6"/>
+              </svg>
+            </button>
+            <div v-if="reasoningExpanded[idx]" class="reasoning-content">
+              <div class="reasoning-text" v-html="renderMarkdown(msg.reasoning)"></div>
+            </div>
+          </div>
+          
+          <div v-if="msg.role === 'assistant'" class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
+          <div v-else v-html="msg.content.replace(/\n/g, '<br>')"></div>
+        </div>
+      </template>
+
+      <!-- 当没有 assistant 消息时（刚发送用户消息），显示 loading -->
+      <div 
+        v-if="isLoading && (messages.length === 0 || messages[messages.length - 1].role !== 'assistant')" 
+        class="loading"
+      >
         <div class="loading-dots">
           <span></span>
           <span></span>
@@ -967,9 +1021,19 @@ function rejectScript() {
                 </template>
                 <template v-else>{{ msg.role }}</template>
               </div>
+              <!-- 思维链内容 -->
+              <div v-if="msg.reasoning" class="debug-reasoning">
+                <div class="debug-reasoning-label">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                  </svg>
+                  思维链
+                </div>
+                <pre class="debug-content debug-reasoning-content">{{ msg.reasoning }}</pre>
+              </div>
               <pre v-if="msg.content" class="debug-content">{{ msg.content }}</pre>
               <pre v-if="msg.tool_calls?.length" class="debug-content debug-tool-calls">{{ formatToolCalls(msg.tool_calls) }}</pre>
-              <div v-if="!msg.content && !msg.tool_calls?.length" class="debug-empty">(空)</div>
+              <div v-if="!msg.content && !msg.tool_calls?.length && !msg.reasoning" class="debug-empty">(空)</div>
             </div>
           </div>
         </div>
