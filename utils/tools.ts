@@ -208,6 +208,9 @@ ${skillsXml}
 激活 Skill 后，你将获得详细的指令来完成任务。`;
 }
 
+// 语言类型
+export type Language = 'en' | 'zh-CN';
+
 // 生成上下文提示
 export function generateContextPrompt(context?: {
   sharePageContent?: boolean;
@@ -217,8 +220,15 @@ export function generateContextPrompt(context?: {
     title: string;
     url?: string;
   };
+  language?: Language;
 }): string {
   const hints: string[] = [];
+  
+  // 语言设置提示
+  if (context?.language) {
+    const langName = context.language === 'zh-CN' ? '简体中文' : 'English';
+    hints.push(`- Always respond in ${langName}`);
+  }
   
   if (context?.sharePageContent) {
     let hint = '- 用户已勾选"分享当前页面内容"，当用户询问关于当前页面的问题时，你需要先获取页面内容';

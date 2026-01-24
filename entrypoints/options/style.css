@@ -1009,3 +1009,124 @@ body {
   color: var(--foreground);
   margin: 0;
 }
+
+
+/* ========== 通用设置样式 ========== */
+
+.settings-body {
+  flex-direction: column;
+  max-width: 800px;
+}
+
+.settings-section {
+  width: 100%;
+}
+
+.settings-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.settings-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-item:last-child {
+  border-bottom: none;
+}
+
+.settings-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-item-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--foreground);
+  margin-bottom: 4px;
+}
+
+.settings-item-label svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.settings-item-desc {
+  font-size: 13px;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+.settings-item-control {
+  flex-shrink: 0;
+  margin-left: 24px;
+}
+
+/* 语言选择器 */
+.language-selector {
+  display: flex;
+  gap: 4px;
+  background: var(--muted);
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.lang-btn {
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: var(--font-body);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: all 200ms ease-out;
+  min-height: 36px;
+}
+
+.lang-btn:hover:not(.active) {
+  color: var(--foreground);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.lang-btn.active {
+  background: var(--card);
+  color: var(--accent);
+  box-shadow: var(--shadow-sm);
+  font-weight: 500;
+}
+
+/* 响应式设置 */
+@media (max-width: 640px) {
+  .settings-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  
+  .settings-item-control {
+    margin-left: 0;
+    width: 100%;
+  }
+  
+  .language-selector {
+    width: 100%;
+  }
+  
+  .lang-btn {
+    flex: 1;
+    text-align: center;
+  }
+}

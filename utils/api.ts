@@ -8,7 +8,8 @@ import {
   type FunctionTool,
   type ToolCall, 
   type ToolResult, 
-  type SkillInfo 
+  type SkillInfo,
+  type Language,
 } from './tools';
 
 export interface ModelInfo {
@@ -275,7 +276,7 @@ function convertToOpenAIMessages(messages: ApiMessage[]): ChatCompletionMessageP
 export async function* streamChat(
   provider: AIProvider,
   messages: ChatMessage[],
-  context?: { sharePageContent?: boolean; skills?: SkillInfo[]; pageInfo?: { domain: string; title: string; url?: string } },
+  context?: { sharePageContent?: boolean; skills?: SkillInfo[]; pageInfo?: { domain: string; title: string; url?: string }; language?: Language },
   config?: FunctionCallingConfig,
   retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG
 ): AsyncGenerator<StreamEvent, void, unknown> {

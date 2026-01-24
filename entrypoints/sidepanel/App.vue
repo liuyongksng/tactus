@@ -8,7 +8,10 @@ import {
   setActiveProviderId,
   watchProviders,
   watchActiveProviderId,
+  getLanguage,
+  watchLanguage,
   type AIProvider,
+  type Language,
 } from '../../utils/storage';
 import {
   getSharePageContent,
@@ -28,6 +31,7 @@ import { extractPageContent, truncateContent } from '../../utils/pageExtractor';
 import { getToolStatusText, type ToolCall, type ToolResult, type SkillInfo } from '../../utils/tools';
 import { getAllSkills, getSkillByName, getSkillFileAsText, type Skill } from '../../utils/skills';
 import { executeScript, setScriptConfirmCallback, type ScriptConfirmationRequest } from '../../utils/skillsExecutor';
+import { t, type Translations } from '../../utils/i18n';
 
 // Configure marked for safe rendering
 marked.setOptions({
@@ -40,6 +44,14 @@ function renderMarkdown(content: string): string {
   if (!content) return '';
   return marked.parse(content) as string;
 }
+
+// Language state
+const currentLanguage = ref<Language>('en');
+
+// 国际化辅助函数
+const i18n = (key: keyof Translations, params?: Record<string, string | number>) => {
+  return t(currentLanguage.value, key, params);
+};
 
 // State
 const messages = shallowRef<ChatMessage[]>([]);
@@ -88,7 +100,7 @@ const activeProvider = computed(() => {
 });
 
 const activeModelName = computed(() => {
-  if (!activeProvider.value) return '未配置';
+  if (!activeProvider.value) return i18n('notConfigured');
   const model = activeProvider.value.selectedModel;
   // return model.length > 12 ? model.substring(0, 12) + '...' : model;
   return model;
@@ -115,16 +127,18 @@ function formatTime(timestamp: number): string {
   const date = new Date(timestamp);
   const now = new Date();
   const isToday = date.toDateString() === now.toDateString();
+  const locale = currentLanguage.value === 'zh-CN' ? 'zh-CN' : 'en-US';
   
   if (isToday) {
-    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
   }
-  return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return date.toLocaleDateString(locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 function formatSessionDate(timestamp: number): string {
   const date = new Date(timestamp);
-  return date.toLocaleDateString('zh-CN', { 
+  const locale = currentLanguage.value === 'zh-CN' ? 'zh-CN' : 'en-US';
+  return date.toLocaleDateString(locale, { 
     year: 'numeric', 
     month: '2-digit', 
     day: '2-digit',
@@ -136,12 +150,16 @@ function formatSessionDate(timestamp: number): string {
 // Initialize
 const unwatchProviders = ref<(() => void) | null>(null);
 const unwatchActiveProviderId = ref<(() => void) | null>(null);
+const unwatchLanguage = ref<(() => void) | null>(null);
 
 onMounted(async () => {
   providers.value = await getAllProviders();
   const activeProvider = await getActiveProvider();
   activeProviderId.value = activeProvider?.id || null;
   sharePageContent.value = await getSharePageContent();
+  
+  // 加载语言设置
+  currentLanguage.value = await getLanguage();
   
   // 加载已安装的 Skills
   installedSkills.value = await getAllSkills();
@@ -165,6 +183,11 @@ onMounted(async () => {
   // 监听 activeProviderId 变化（跨页面同步）
   unwatchActiveProviderId.value = watchActiveProviderId((newId) => {
     activeProviderId.value = newId;
+  });
+  
+  // 监听语言变化（跨页面同步）
+  unwatchLanguage.value = watchLanguage((newLang) => {
+    currentLanguage.value = newLang;
   });
 
   // 监听 skills 变更消息
@@ -199,6 +222,7 @@ function handleSkillsChanged(message: any) {
 onUnmounted(() => {
   unwatchProviders.value?.();
   unwatchActiveProviderId.value?.();
+  unwatchLanguage.value?.();
   // 移除 skills 变更监听
   browser.runtime.onMessage.removeListener(handleSkillsChanged);
   // 清理调试面板刷新定时器
@@ -454,7 +478,7 @@ async function sendMessage() {
 
   const provider = await getActiveProvider();
   if (!provider) {
-    alert('请先在设置中配置 AI 服务商');
+    alert(i18n('noModelConfig'));
     openSettings();
     return;
   }
@@ -524,10 +548,13 @@ async function sendMessage() {
       }
     }
 
+    // 获取当前语言设置
+    const currentLanguage = await getLanguage();
+
     for await (const event of streamChat(
       provider, 
       messages.value.slice(0, -1), 
-      { sharePageContent: sharePageContent.value, skills: skillsInfo, pageInfo }, 
+      { sharePageContent: sharePageContent.value, skills: skillsInfo, pageInfo, language: currentLanguage }, 
       reactConfig
     )) {
       switch (event.type) {
@@ -648,7 +675,7 @@ async function loadSession(session: ChatSession) {
 // Delete session
 async function removeSession(id: string, e: Event) {
   e.stopPropagation();
-  if (confirm('确定删除这个对话吗？')) {
+  if (confirm(i18n('confirmDeleteChat'))) {
     await deleteSession(id);
     sessions.value = await getAllSessions();
     if (currentSession.value?.id === id) {
@@ -782,22 +809,22 @@ function rejectScript() {
     <div class="header">
       <h1>Tactus</h1>
       <div class="header-actions">
-        <button class="icon-btn" @click="viewDebugMessages" title="查看 API 上下文">
+        <button class="icon-btn" @click="viewDebugMessages" title="API Context">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
           </svg>
         </button>
-        <button class="icon-btn" @click="newChat" title="新建对话">
+        <button class="icon-btn" @click="newChat" :title="i18n('newChat')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 5v14M5 12h14"/>
           </svg>
         </button>
-        <button class="icon-btn" @click="openHistory" title="历史对话">
+        <button class="icon-btn" @click="openHistory" :title="i18n('history')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
           </svg>
         </button>
-        <button class="icon-btn" @click="openSettings" title="设置">
+        <button class="icon-btn" @click="openSettings" :title="i18n('settings')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/>
             <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
@@ -810,16 +837,16 @@ function rejectScript() {
     <div class="options-bar">
       <label class="checkbox-label">
         <input type="checkbox" v-model="sharePageContent" />
-        分享当前页面内容
+        {{ i18n('sharePageContent') }}
       </label>
     </div>
 
     <!-- Chat area -->
     <div class="chat-area" ref="chatAreaRef">
       <div v-if="!messages.length" class="empty-state">
-        <p>欢迎使用，有什么可以帮您？</p>
+        <p>{{ i18n('welcomeMessage') }}</p>
         <p v-if="sharePageContent" class="empty-hint">
-          页面内容将与 AI 共享
+          {{ i18n('pageContentShared') }}
         </p>
       </div>
 
@@ -835,7 +862,7 @@ function rejectScript() {
             <span></span>
           </div>
           <span v-if="toolStatus">{{ toolStatus }}</span>
-          <span v-else>思考中...</span>
+          <span v-else>{{ i18n('thinking') }}</span>
         </div>
 
         <div class="message" :class="msg.role">
@@ -852,7 +879,7 @@ function rejectScript() {
               <svg class="reasoning-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
               </svg>
-              <span class="reasoning-label">思维链</span>
+              <span class="reasoning-label">{{ currentLanguage === 'zh-CN' ? '思维链' : 'Reasoning' }}</span>
               <svg class="reasoning-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M6 9l6 6 6-6"/>
               </svg>
@@ -878,7 +905,7 @@ function rejectScript() {
           <span></span>
         </div>
         <span v-if="toolStatus">{{ toolStatus }}</span>
-        <span v-else>思考中...</span>
+        <span v-else>{{ i18n('thinking') }}</span>
       </div>
     </div>
 
@@ -892,7 +919,7 @@ function rejectScript() {
         <textarea
           ref="textareaRef"
           v-model="inputText"
-          placeholder="输入您的消息..."
+          :placeholder="i18n('inputPlaceholder')"
           rows="1"
           @keydown="handleKeydown"
         ></textarea>
@@ -902,7 +929,7 @@ function rejectScript() {
             <button 
               class="model-selector-btn" 
               @click="showModelSelector = !showModelSelector"
-              :title="activeProvider?.selectedModel || '选择模型'"
+              :title="activeProvider?.selectedModel || ''"
             >
               <span class="model-name">{{ activeModelName }}</span>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -912,8 +939,8 @@ function rejectScript() {
             <!-- Model dropdown -->
             <div v-if="showModelSelector" class="model-dropdown">
               <div v-if="allModelOptions.length === 0" class="dropdown-empty">
-                <span>暂无模型配置</span>
-                <button class="dropdown-settings-btn" @click="openSettings">去设置</button>
+                <span>{{ i18n('noProviders') }}</span>
+                <button class="dropdown-settings-btn" @click="openSettings">{{ i18n('settings') }}</button>
               </div>
               <div v-else class="model-options-list">
                 <div
@@ -945,12 +972,12 @@ function rejectScript() {
     <div v-if="showHistory" class="modal-overlay" @click.self="showHistory = false">
       <div class="modal">
         <div class="modal-header">
-          <h2>历史对话</h2>
+          <h2>{{ i18n('history') }}</h2>
           <button class="close-btn" @click="showHistory = false">×</button>
         </div>
         <div class="modal-body">
           <div v-if="sessions.length === 0" class="empty-history">
-            暂无历史对话
+            {{ currentLanguage === 'zh-CN' ? '暂无历史对话' : 'No chat history' }}
           </div>
           <div v-else class="session-list" ref="sessionListRef" @scroll="handleSessionListScroll">
             <div
@@ -963,11 +990,11 @@ function rejectScript() {
               <div class="session-info">
                 <div class="session-title">{{ session.title }}</div>
                 <div class="session-meta">
-                  <span>{{ session.messages?.length || 0 }} 条消息</span>
+                  <span>{{ session.messages?.length || 0 }} {{ currentLanguage === 'zh-CN' ? '条消息' : 'messages' }}</span>
                   <span>{{ formatSessionDate(session.updatedAt) }}</span>
                 </div>
               </div>
-              <button class="delete-session-btn" @click="removeSession(session.id, $event)" title="删除">
+              <button class="delete-session-btn" @click="removeSession(session.id, $event)" :title="i18n('delete')">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
                 </svg>
@@ -975,10 +1002,10 @@ function rejectScript() {
             </div>
             <!-- 加载更多提示 -->
             <div v-if="sessionsLoading" class="session-loading">
-              <span>加载中...</span>
+              <span>{{ i18n('loading') }}</span>
             </div>
             <div v-else-if="!sessionsHasMore && sessions.length > 0" class="session-end">
-              <span>没有更多了</span>
+              <span>{{ currentLanguage === 'zh-CN' ? '没有更多了' : 'No more' }}</span>
             </div>
           </div>
         </div>
@@ -989,9 +1016,9 @@ function rejectScript() {
     <div v-if="showDebugModal" class="modal-overlay" @click.self="closeDebugModal">
       <div class="modal debug-modal">
         <div class="modal-header">
-          <h2>API 上下文调试</h2>
+          <h2>{{ currentLanguage === 'zh-CN' ? 'API 上下文调试' : 'API Context Debug' }}</h2>
           <div class="debug-header-actions">
-            <button class="copy-btn" @click="copyDebugMessages" title="复制 JSON">
+            <button class="copy-btn" @click="copyDebugMessages" title="Copy JSON">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                 <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
@@ -1027,13 +1054,13 @@ function rejectScript() {
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
                   </svg>
-                  思维链
+                  {{ currentLanguage === 'zh-CN' ? '思维链' : 'Reasoning' }}
                 </div>
                 <pre class="debug-content debug-reasoning-content">{{ msg.reasoning }}</pre>
               </div>
               <pre v-if="msg.content" class="debug-content">{{ msg.content }}</pre>
               <pre v-if="msg.tool_calls?.length" class="debug-content debug-tool-calls">{{ formatToolCalls(msg.tool_calls) }}</pre>
-              <div v-if="!msg.content && !msg.tool_calls?.length && !msg.reasoning" class="debug-empty">(空)</div>
+              <div v-if="!msg.content && !msg.tool_calls?.length && !msg.reasoning" class="debug-empty">{{ currentLanguage === 'zh-CN' ? '(空)' : '(empty)' }}</div>
             </div>
           </div>
         </div>
@@ -1044,15 +1071,15 @@ function rejectScript() {
     <div v-if="showScriptConfirmModal && pendingScriptConfirm" class="modal-overlay">
       <div class="modal script-confirm-modal">
         <div class="modal-header">
-          <h2>脚本执行确认</h2>
+          <h2>{{ currentLanguage === 'zh-CN' ? '脚本执行确认' : 'Script Execution Confirm' }}</h2>
         </div>
         <div class="modal-body">
           <div class="script-confirm-info">
-            <p>Skill <strong>{{ pendingScriptConfirm.request.skillName }}</strong> 请求执行以下脚本：</p>
+            <p>{{ currentLanguage === 'zh-CN' ? 'Skill' : 'Skill' }} <strong>{{ pendingScriptConfirm.request.skillName }}</strong> {{ currentLanguage === 'zh-CN' ? '请求执行以下脚本：' : 'requests to execute:' }}</p>
             <div class="script-name-display">{{ pendingScriptConfirm.request.scriptName }}</div>
           </div>
           <div class="script-preview">
-            <div class="script-preview-label">脚本内容预览</div>
+            <div class="script-preview-label">{{ currentLanguage === 'zh-CN' ? '脚本内容预览' : 'Script Preview' }}</div>
             <pre>{{ pendingScriptConfirm.request.scriptContent.slice(0, 500) }}{{ pendingScriptConfirm.request.scriptContent.length > 500 ? '...' : '' }}</pre>
           </div>
           <div class="script-confirm-warning">
@@ -1061,12 +1088,12 @@ function rejectScript() {
               <line x1="12" y1="9" x2="12" y2="13"/>
               <line x1="12" y1="17" x2="12.01" y2="17"/>
             </svg>
-            <span>请确认脚本内容安全后再执行</span>
+            <span>{{ currentLanguage === 'zh-CN' ? '请确认脚本内容安全后再执行' : 'Please verify the script is safe before executing' }}</span>
           </div>
           <div class="script-confirm-actions">
-            <button class="btn btn-outline" @click="rejectScript">取消</button>
-            <button class="btn btn-secondary" @click="confirmScript(false)">执行一次</button>
-            <button class="btn btn-primary" @click="confirmScript(true)">信任并执行</button>
+            <button class="btn btn-outline" @click="rejectScript">{{ i18n('cancel') }}</button>
+            <button class="btn btn-secondary" @click="confirmScript(false)">{{ currentLanguage === 'zh-CN' ? '执行一次' : 'Run Once' }}</button>
+            <button class="btn btn-primary" @click="confirmScript(true)">{{ currentLanguage === 'zh-CN' ? '信任并执行' : 'Trust & Run' }}</button>
           </div>
         </div>
       </div>

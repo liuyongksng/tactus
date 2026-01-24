@@ -37,6 +37,44 @@ const trustedScriptsStorage = storage.defineItem<TrustedScript[]>('local:trusted
   fallback: [],
 });
 
+// ==================== Language Settings ====================
+
+export type Language = 'en' | 'zh-CN';
+
+const languageStorage = storage.defineItem<Language>('local:language', {
+  fallback: 'en',
+});
+
+export async function getLanguage(): Promise<Language> {
+  return await languageStorage.getValue();
+}
+
+export async function setLanguage(lang: Language): Promise<void> {
+  await languageStorage.setValue(lang);
+}
+
+export function watchLanguage(callback: (lang: Language) => void): () => void {
+  return languageStorage.watch((newValue) => {
+    callback(newValue);
+  });
+}
+
+// 检测浏览器语言并返回匹配的语言设置
+export function detectBrowserLanguage(): Language {
+  const browserLang = navigator.language || (navigator as any).userLanguage || 'en';
+  // 检查是否为简体中文
+  if (browserLang.toLowerCase().startsWith('zh')) {
+    return 'zh-CN';
+  }
+  return 'en';
+}
+
+// 初始化语言设置（仅在首次安装时调用）
+export async function initializeLanguage(): Promise<void> {
+  const detectedLang = detectBrowserLanguage();
+  await setLanguage(detectedLang);
+}
+
 // ==================== Watch Helpers ====================
 
 export function watchProviders(callback: (providers: AIProvider[]) => void): () => void {

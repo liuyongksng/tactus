@@ -8,8 +8,11 @@ import {
   deleteProvider,
   getTrustedScripts,
   untrustScript,
+  getLanguage,
+  setLanguage,
   type AIProvider,
   type TrustedScript,
+  type Language,
 } from '../../utils/storage';
 import {
   getAllSkills,
@@ -18,8 +21,17 @@ import {
 } from '../../utils/db';
 import { fetchModels } from '../../utils/api';
 import { importSkillFromFolder } from '../../utils/skillsImporter';
+import { t, type Translations } from '../../utils/i18n';
 
-const activeNav = ref<'models' | 'skills'>('models');
+const activeNav = ref<'models' | 'skills' | 'settings'>('models');
+
+// 语言设置
+const currentLanguage = ref<Language>('en');
+
+// 国际化辅助函数
+const i18n = (key: keyof Translations, params?: Record<string, string | number>) => {
+  return t(currentLanguage.value, key, params);
+};
 
 // 模型配置
 const providers = ref<AIProvider[]>([]);
@@ -60,6 +72,8 @@ onMounted(async () => {
     selectProvider(activeProviderId.value || providers.value[0].id);
   }
   await loadSkills();
+  // 加载语言设置
+  currentLanguage.value = await getLanguage();
 });
 
 async function loadSkills() {
@@ -92,7 +106,7 @@ function addNewProvider() {
 
 async function fetchAvailableModels() {
   if (!formBaseUrl.value || !formApiKey.value) {
-    alert('请先填写 Base URL 和 API Key');
+    alert(i18n('fillRequired'));
     return;
   }
   isFetchingModels.value = true;
@@ -100,7 +114,7 @@ async function fetchAvailableModels() {
     const models = await fetchModels(formBaseUrl.value, formApiKey.value);
     availableModels.value = models.map(m => m.id);
   } catch (e) {
-    alert('获取模型列表失败');
+    alert(i18n('fetchModelsFailed'));
   } finally {
     isFetchingModels.value = false;
   }
@@ -121,11 +135,11 @@ function removeModel(model: string) {
 
 async function saveCurrentProvider() {
   if (!formName.value || !formBaseUrl.value || !formApiKey.value) {
-    alert('请填写服务商名称、Base URL 和 API Key');
+    alert(i18n('fillRequired'));
     return;
   }
   if (formModels.value.length === 0) {
-    alert('请至少添加一个模型');
+    alert(i18n('addAtLeastOneModel'));
     return;
   }
   isSaving.value = true;
@@ -148,7 +162,6 @@ async function saveCurrentProvider() {
       await setActiveProviderId(provider.id);
     }
     selectedProviderId.value = provider.id;
-    alert('保存成功');
   } finally {
     isSaving.value = false;
   }
@@ -156,7 +169,7 @@ async function saveCurrentProvider() {
 
 async function removeProvider() {
   if (!selectedProviderId.value || isNewProvider.value) return;
-  if (confirm('确定删除这个服务商吗？')) {
+  if (confirm(i18n('confirmDeleteProvider'))) {
     await deleteProvider(selectedProviderId.value);
     providers.value = await getAllProviders();
     if (activeProviderId.value === selectedProviderId.value) {
@@ -204,7 +217,7 @@ async function handleFolderImport(event: Event) {
       importError.value = result.error || '导入失败';
     }
   } catch (e) {
-    importError.value = e instanceof Error ? e.message : '导入失败';
+    importError.value = e instanceof Error ? e.message : 'Import failed';
   } finally {
     isImporting.value = false;
     input.value = '';
@@ -212,7 +225,7 @@ async function handleFolderImport(event: Event) {
 }
 
 async function removeSkill(id: string) {
-  if (confirm('确定删除这个 Skill 吗？')) {
+  if (confirm(i18n('confirmDeleteSkill'))) {
     await deleteSkill(id);
     await loadSkills();
     if (selectedSkillId.value === id) selectedSkillId.value = skills.value[0]?.id || null;
@@ -222,16 +235,23 @@ async function removeSkill(id: string) {
 }
 
 async function handleUntrustScript(skillId: string, scriptName: string) {
-  if (confirm(`确定取消信任脚本 "${scriptName}" 吗？`)) {
+  if (confirm(i18n('confirmUntrustScript', { name: scriptName }))) {
     await untrustScript(skillId, scriptName);
     trustedScripts.value = await getTrustedScripts();
   }
 }
 
 function formatDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString('zh-CN', {
+  const locale = currentLanguage.value === 'zh-CN' ? 'zh-CN' : 'en-US';
+  return new Date(timestamp).toLocaleDateString(locale, {
     year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
   });
+}
+
+// 语言切换
+async function handleLanguageChange(lang: Language) {
+  currentLanguage.value = lang;
+  await setLanguage(lang);
 }
 </script>
 
@@ -244,13 +264,20 @@ function formatDate(timestamp: number): string {
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
           </svg>
-          <span>模型配置</span>
+          <span>{{ i18n('navModels') }}</span>
         </div>
         <div class="nav-item" :class="{ active: activeNav === 'skills' }" @click="activeNav = 'skills'">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
           </svg>
-          <span>Skills 管理</span>
+          <span>{{ i18n('navSkills') }}</span>
+        </div>
+        <div class="nav-item" :class="{ active: activeNav === 'settings' }" @click="activeNav = 'settings'">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
+          </svg>
+          <span>{{ i18n('navSettings') }}</span>
         </div>
       </div>
     </nav>
@@ -258,14 +285,14 @@ function formatDate(timestamp: number): string {
     <main class="main-content">
       <template v-if="activeNav === 'models'">
         <div class="content-header">
-          <h2>模型配置</h2>
-          <p class="content-desc">管理 AI 服务商和模型</p>
+          <h2>{{ i18n('modelConfig') }}</h2>
+          <p class="content-desc">{{ i18n('modelConfigDesc') }}</p>
         </div>
         <div class="content-body">
           <aside class="provider-sidebar">
             <div class="sidebar-header">
-              <span class="section-label">服务商列表</span>
-              <button class="add-btn" @click="addNewProvider" title="添加服务商">
+              <span class="section-label">{{ i18n('providerList') }}</span>
+              <button class="add-btn" @click="addNewProvider" :title="i18n('addProvider')">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
               </button>
             </div>
@@ -273,54 +300,54 @@ function formatDate(timestamp: number): string {
               <div v-for="p in providers" :key="p.id" class="provider-item" :class="{ selected: p.id === selectedProviderId }" @click="selectProvider(p.id)">
                 <div class="provider-info">
                   <div class="provider-name">{{ p.name }}</div>
-                  <div class="provider-model">{{ (Array.isArray(p.models) ? p.models : []).length }} 个模型</div>
+                  <div class="provider-model">{{ i18n('modelsCount', { count: (Array.isArray(p.models) ? p.models : []).length }) }}</div>
                 </div>
               </div>
-              <div v-if="providers.length === 0" class="empty-list">暂无服务商配置</div>
+              <div v-if="providers.length === 0" class="empty-list">{{ i18n('noProviders') }}</div>
             </div>
           </aside>
           <div class="provider-form-area">
             <div v-if="selectedProviderId" class="form-container">
               <div class="form-header">
-                <h3>{{ isNewProvider ? '添加服务商' : '编辑服务商' }}</h3>
+                <h3>{{ isNewProvider ? i18n('addProvider') : i18n('editProvider') }}</h3>
                 <div class="form-actions" v-if="!isNewProvider">
-                  <button class="btn btn-danger" @click="removeProvider">删除</button>
+                  <button class="btn btn-danger" @click="removeProvider">{{ i18n('delete') }}</button>
                 </div>
               </div>
               <div class="form-body">
                 <div class="form-group">
-                  <label>服务商名称</label>
-                  <input v-model="formName" placeholder="例如：OpenAI, DeepSeek" />
+                  <label>{{ i18n('providerName') }}</label>
+                  <input v-model="formName" :placeholder="i18n('providerNamePlaceholder')" />
                 </div>
                 <div class="form-group">
-                  <label>Base URL</label>
-                  <input v-model="formBaseUrl" placeholder="https://api.openai.com" />
+                  <label>{{ i18n('baseUrl') }}</label>
+                  <input v-model="formBaseUrl" :placeholder="i18n('baseUrlPlaceholder')" />
                 </div>
                 <div class="form-group">
-                  <label>API Key</label>
-                  <input v-model="formApiKey" type="password" placeholder="sk-..." />
+                  <label>{{ i18n('apiKey') }}</label>
+                  <input v-model="formApiKey" type="password" :placeholder="i18n('apiKeyPlaceholder')" />
                 </div>
                 <div class="form-group">
                   <div class="label-row">
-                    <label>模型列表</label>
-                    <button class="fetch-btn" @click="fetchAvailableModels" :disabled="isFetchingModels">{{ isFetchingModels ? '获取中...' : '获取可用模型' }}</button>
+                    <label>{{ i18n('modelList') }}</label>
+                    <button class="fetch-btn" @click="fetchAvailableModels" :disabled="isFetchingModels">{{ isFetchingModels ? i18n('fetchingModels') : i18n('fetchModels') }}</button>
                   </div>
                   <div v-if="availableModels.length > 0" class="available-models">
-                    <div class="available-models-label">可用模型（点击添加）</div>
+                    <div class="available-models-label">{{ i18n('availableModels') }}</div>
                     <div class="model-tags">
                       <button v-for="m in availableModels" :key="m" class="model-tag" :class="{ added: formModels.includes(m) }" @click="addModel(m)" :disabled="formModels.includes(m)">{{ m }}</button>
                     </div>
                   </div>
                   <div class="custom-model-input">
-                    <input v-model="formCustomModel" placeholder="手动输入模型名称" @keydown.enter="addCustomModel" />
-                    <button class="add-model-btn" @click="addCustomModel" :disabled="!formCustomModel.trim()">添加</button>
+                    <input v-model="formCustomModel" :placeholder="i18n('customModelPlaceholder')" @keydown.enter="addCustomModel" />
+                    <button class="add-model-btn" @click="addCustomModel" :disabled="!formCustomModel.trim()">{{ i18n('add') }}</button>
                   </div>
                   <div v-if="formModels.length > 0" class="selected-models">
-                    <div class="selected-models-label">已添加的模型</div>
+                    <div class="selected-models-label">{{ i18n('addedModels') }}</div>
                     <div class="model-list">
                       <div v-for="m in formModels" :key="m" class="model-item">
                         <span class="model-name">{{ m }}</span>
-                        <button class="remove-model-btn" @click="removeModel(m)" title="移除">
+                        <button class="remove-model-btn" @click="removeModel(m)" :title="i18n('delete')">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
                         </button>
                       </div>
@@ -328,25 +355,25 @@ function formatDate(timestamp: number): string {
                   </div>
                 </div>
                 <div class="form-footer">
-                  <button class="btn btn-primary" @click="saveCurrentProvider" :disabled="isSaving">{{ isSaving ? '保存中...' : '保存配置' }}</button>
+                  <button class="btn btn-primary" @click="saveCurrentProvider" :disabled="isSaving">{{ isSaving ? i18n('saving') : i18n('saveConfig') }}</button>
                 </div>
               </div>
             </div>
-            <div v-else class="empty-form"><p>请选择或添加一个服务商</p></div>
+            <div v-else class="empty-form"><p>{{ i18n('selectOrAddProvider') }}</p></div>
           </div>
         </div>
       </template>
 
       <template v-if="activeNav === 'skills'">
         <div class="content-header">
-          <h2>Skills 管理</h2>
-          <p class="content-desc">导入和管理 Agent Skills，扩展 AI 能力</p>
+          <h2>{{ i18n('skillsManagement') }}</h2>
+          <p class="content-desc">{{ i18n('skillsManagementDesc') }}</p>
         </div>
         <div class="content-body">
           <aside class="provider-sidebar">
             <div class="sidebar-header">
-              <span class="section-label">已安装 Skills</span>
-              <button class="add-btn" @click="openImportModal" title="导入 Skill">
+              <span class="section-label">{{ i18n('installedSkills') }}</span>
+              <button class="add-btn" @click="openImportModal" :title="i18n('importSkill')">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
               </button>
             </div>
@@ -354,10 +381,10 @@ function formatDate(timestamp: number): string {
               <div v-for="skill in skills" :key="skill.id" class="provider-item" :class="{ selected: skill.id === selectedSkillId }" @click="selectSkill(skill.id)">
                 <div class="provider-info">
                   <div class="provider-name">{{ skill.metadata.name }}</div>
-                  <div class="provider-model">{{ skill.scripts.length }} 个脚本</div>
+                  <div class="provider-model">{{ i18n('scriptsCount', { count: skill.scripts.length }) }}</div>
                 </div>
               </div>
-              <div v-if="skills.length === 0" class="empty-list">暂无已安装的 Skills</div>
+              <div v-if="skills.length === 0" class="empty-list">{{ i18n('noSkills') }}</div>
             </div>
           </aside>
           <div class="provider-form-area">
@@ -365,22 +392,22 @@ function formatDate(timestamp: number): string {
               <div class="form-header">
                 <h3>{{ selectedSkill.metadata.name }}</h3>
                 <div class="form-actions">
-                  <button class="btn btn-danger" @click="removeSkill(selectedSkill.id)">删除</button>
+                  <button class="btn btn-danger" @click="removeSkill(selectedSkill.id)">{{ i18n('delete') }}</button>
                 </div>
               </div>
               <div class="form-body">
                 <div class="skill-info-section">
                   <div class="skill-meta">
-                    <span class="skill-badge">{{ selectedSkill.source === 'imported' ? '已导入' : '内置' }}</span>
+                    <span class="skill-badge">{{ selectedSkill.source === 'imported' ? i18n('imported') : i18n('builtin') }}</span>
                     <span class="skill-date">{{ formatDate(selectedSkill.importedAt) }}</span>
                   </div>
                   <div class="skill-description">{{ selectedSkill.metadata.description }}</div>
                   <div v-if="selectedSkill.metadata.compatibility" class="skill-compat">
-                    <span class="compat-label">兼容性：</span>{{ selectedSkill.metadata.compatibility }}
+                    <span class="compat-label">{{ i18n('compatibility') }}</span>{{ selectedSkill.metadata.compatibility }}
                   </div>
                 </div>
                 <div v-if="selectedSkill.scripts.length > 0" class="form-group">
-                  <label>脚本文件</label>
+                  <label>{{ i18n('scriptFiles') }}</label>
                   <div class="script-list">
                     <div v-for="script in selectedSkill.scripts" :key="script.name" class="script-item">
                       <div class="script-info">
@@ -390,15 +417,15 @@ function formatDate(timestamp: number): string {
                         <span class="script-name">{{ script.name }}</span>
                       </div>
                       <div class="script-actions">
-                        <span v-if="skillTrustedScripts.some(t => t.scriptName === script.name)" class="trusted-badge" @click="handleUntrustScript(selectedSkill!.id, script.name)" title="点击取消信任">已信任</span>
-                        <span v-else class="untrusted-badge">需确认</span>
+                        <span v-if="skillTrustedScripts.some(t => t.scriptName === script.name)" class="trusted-badge" @click="handleUntrustScript(selectedSkill!.id, script.name)" :title="i18n('confirmUntrustScript', { name: script.name })">{{ i18n('trusted') }}</span>
+                        <span v-else class="untrusted-badge">{{ i18n('needConfirm') }}</span>
                       </div>
                     </div>
                   </div>
-                  <p class="script-hint">脚本执行前需要用户确认，已信任的脚本将自动执行</p>
+                  <p class="script-hint">{{ i18n('scriptHint') }}</p>
                 </div>
                 <div v-if="selectedSkill.references.length > 0" class="form-group">
-                  <label>引用文件</label>
+                  <label>{{ i18n('referenceFiles') }}</label>
                   <div class="resource-list">
                     <div v-for="ref in selectedSkill.references" :key="ref.name" class="resource-item">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
@@ -407,7 +434,7 @@ function formatDate(timestamp: number): string {
                   </div>
                 </div>
                 <div v-if="selectedSkill.assets.length > 0" class="form-group">
-                  <label>资源文件</label>
+                  <label>{{ i18n('assetFiles') }}</label>
                   <div class="resource-list">
                     <div v-for="asset in selectedSkill.assets" :key="asset.name" class="resource-item">
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
@@ -416,7 +443,7 @@ function formatDate(timestamp: number): string {
                   </div>
                 </div>
                 <div class="form-group">
-                  <label>指令预览</label>
+                  <label>{{ i18n('instructionsPreview') }}</label>
                   <div class="instructions-preview">
                     <pre>{{ selectedSkill.instructions.slice(0, 500) }}{{ selectedSkill.instructions.length > 500 ? '...' : '' }}</pre>
                   </div>
@@ -427,8 +454,51 @@ function formatDate(timestamp: number): string {
               <div class="empty-icon">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
               </div>
-              <p>选择一个 Skill 查看详情，或导入新的 Skill</p>
-              <button class="btn btn-primary" @click="openImportModal">导入 Skill</button>
+              <p>{{ i18n('selectSkillOrImport') }}</p>
+              <button class="btn btn-primary" @click="openImportModal">{{ i18n('importSkill') }}</button>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <template v-if="activeNav === 'settings'">
+        <div class="content-header">
+          <h2>{{ i18n('generalSettings') }}</h2>
+          <p class="content-desc">{{ i18n('generalSettingsDesc') }}</p>
+        </div>
+        <div class="content-body settings-body">
+          <div class="settings-section">
+            <div class="settings-card">
+              <div class="settings-item">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10"/>
+                      <path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+                    </svg>
+                    <span>{{ i18n('language') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('languageDesc') }}</p>
+                </div>
+                <div class="settings-item-control">
+                  <div class="language-selector">
+                    <button 
+                      class="lang-btn" 
+                      :class="{ active: currentLanguage === 'en' }"
+                      @click="handleLanguageChange('en')"
+                    >
+                      English
+                    </button>
+                    <button 
+                      class="lang-btn" 
+                      :class="{ active: currentLanguage === 'zh-CN' }"
+                      @click="handleLanguageChange('zh-CN')"
+                    >
+                      简体中文
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -438,16 +508,16 @@ function formatDate(timestamp: number): string {
     <div v-if="showImportModal" class="modal-overlay" @click.self="closeImportModal">
       <div class="modal import-modal">
         <div class="modal-header">
-          <h3>导入 Skill</h3>
+          <h3>{{ i18n('importSkillTitle') }}</h3>
           <button class="close-btn" @click="closeImportModal">×</button>
         </div>
         <div class="modal-body">
-          <p class="import-desc">选择包含 <code>SKILL.md</code> 的文件夹进行导入。</p>
+          <p class="import-desc">{{ i18n('importSkillDesc') }}</p>
           <div class="import-area">
             <input type="file" id="skill-folder-input" webkitdirectory directory @change="handleFolderImport" :disabled="isImporting" />
             <label for="skill-folder-input" class="import-label" :class="{ disabled: isImporting }">
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
-              <span>{{ isImporting ? '导入中...' : '点击选择文件夹' }}</span>
+              <span>{{ isImporting ? i18n('importing') : i18n('selectFolder') }}</span>
             </label>
           </div>
           <div v-if="importError" class="import-error">
@@ -457,18 +527,18 @@ function formatDate(timestamp: number): string {
           <div v-if="importWarnings.length > 0" class="import-warnings">
             <div class="warning-title">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-              导入成功，但有以下警告：
+              {{ i18n('importWarnings') }}
             </div>
             <ul><li v-for="(w, i) in importWarnings" :key="i">{{ w }}</li></ul>
-            <button class="btn btn-primary" @click="closeImportModal">确定</button>
+            <button class="btn btn-primary" @click="closeImportModal">{{ i18n('confirm') }}</button>
           </div>
           <div class="import-help">
-            <h4>Skill 文件夹结构</h4>
+            <h4>{{ i18n('skillFolderStructure') }}</h4>
             <pre>my-skill/
-├── SKILL.md          # 必需
-├── scripts/          # 可选（仅 .js）
-├── references/       # 可选
-└── assets/           # 可选</pre>
+├── SKILL.md          # {{ i18n('required') }}
+├── scripts/          # {{ i18n('optional') }} ({{ i18n('jsOnly') }})
+├── references/       # {{ i18n('optional') }}
+└── assets/           # {{ i18n('optional') }}</pre>
           </div>
         </div>
       </div>

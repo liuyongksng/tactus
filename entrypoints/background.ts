@@ -70,6 +70,15 @@ async function executeScriptInTab(tabId: number, code: string, args: Record<stri
 }
 
 export default defineBackground(() => {
+  // 监听扩展安装事件
+  browser.runtime.onInstalled.addListener(async ({ reason }) => {
+    if (reason === 'install') {
+      // 首次安装时，检测并设置语言
+      const { initializeLanguage } = await import('../utils/storage');
+      await initializeLanguage();
+    }
+  });
+
   // 跟踪 sidepanel 连接状态
   let sidePanelPort: any = null;
 
