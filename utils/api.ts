@@ -165,11 +165,21 @@ export function setLastApiMessages(messages: ApiMessage[]) {
   lastApiMessages = messages;
 }
 
+// 规范化 Base URL，移除末尾的斜杠和 /v1 后缀
+function normalizeBaseUrl(baseUrl: string): string {
+  let url = baseUrl.trim().replace(/\/+$/, ''); // 移除末尾斜杠
+  // 移除末尾的 /v1（不区分大小写）
+  if (url.toLowerCase().endsWith('/v1')) {
+    url = url.slice(0, -3);
+  }
+  return url;
+}
+
 // 创建 OpenAI 客户端
 function createClient(provider: AIProvider): OpenAI {
   return new OpenAI({
     apiKey: provider.apiKey,
-    baseURL: `${provider.baseUrl.replace(/\/$/, '')}/v1`,
+    baseURL: `${normalizeBaseUrl(provider.baseUrl)}/v1`,
     dangerouslyAllowBrowser: true, // 浏览器扩展环境需要
     maxRetries: 0, // 禁用 SDK 内置重试，由代码层统一控制
   });
@@ -179,7 +189,7 @@ export async function fetchModels(baseUrl: string, apiKey: string): Promise<Mode
   try {
     const client = new OpenAI({
       apiKey,
-      baseURL: `${baseUrl.replace(/\/$/, '')}/v1`,
+      baseURL: `${normalizeBaseUrl(baseUrl)}/v1`,
       dangerouslyAllowBrowser: true,
     });
     
@@ -234,6 +244,50 @@ function isJsonClosed(str: string): boolean {
   }
   
   return braceCount === 0 && str.includes('{');
+}
+
+// 尝试修复不完整的 JSON（补全缺失的括号）
+// 用于处理某些模型（如 GLM-4.7）在生成嵌套 JSON 时提前结束输出的情况
+function tryFixIncompleteJson(str: string): string {
+  if (!str) return str;
+  
+  // 先尝试直接解析，如果成功就不需要修复
+  try {
+    JSON.parse(str);
+    return str;
+  } catch {}
+  
+  // 计算缺失的括号
+  let braceCount = 0;
+  let bracketCount = 0;
+  let inString = false;
+  
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    if (char === '"' && str[i - 1] !== '\\') {
+      inString = !inString;
+    } else if (!inString) {
+      if (char === '{') braceCount++;
+      else if (char === '}') braceCount--;
+      else if (char === '[') bracketCount++;
+      else if (char === ']') bracketCount--;
+    }
+  }
+  
+  // 补全缺失的括号
+  let fixed = str;
+  while (bracketCount > 0) { fixed += ']'; bracketCount--; }
+  while (braceCount > 0) { fixed += '}'; braceCount--; }
+  
+  // 验证补全后是否有效
+  try {
+    JSON.parse(fixed);
+    console.log('[tryFixIncompleteJson] 成功修复不完整的 JSON:', str, '->', fixed);
+    return fixed;
+  } catch {
+    // 补全后仍然无效，返回原字符串（让后续逻辑处理错误）
+    return str;
+  }
 }
 
 // 转换工具格式
@@ -491,6 +545,13 @@ export async function* streamChat(
     
     // 检查是否有工具调用
     if (toolCalls.length > 0 && toolExecutor) {
+      // 尝试修复不完整的 JSON 参数（处理某些模型截断输出的情况）
+      for (const tc of toolCalls) {
+        if (tc.arguments) {
+          tc.arguments = tryFixIncompleteJson(tc.arguments);
+        }
+      }
+      
       // 检查是否有参数解析错误
       // 如果有解析错误，剔除本次模型回复，直接重试
       let hasParseError = false;
