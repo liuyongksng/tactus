@@ -175,6 +175,13 @@ tactus/
 
 Issues and Pull Requests are welcome!
 
+## 🚧 Future Roadmap
+
+We have exciting plans for the future development of Tactus:
+- [ ] Introduce CDP automation as a tool for the Agent, allowing manual intervention and takeover.
+- [ ] Record operations and generate reusable skills with a single click.
+- [ ] Tackle the challenges of long-term stable automation tasks.
+
 ## 📄 License
 
 Apache-2.0 License

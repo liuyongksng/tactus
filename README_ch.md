@@ -175,6 +175,13 @@ tactus/
 
 欢迎提交 Issue 和 Pull Request！
 
+## 🚧 未来发展路线图
+
+我们对 Tactus 的未来发展有着激动人心的计划：
+- [ ] 引入 CDP 自动化作为 Agent 的工具，可人工接管介入
+- [ ] 操作录制一键生成可复用的 skills
+- [ ] 长时稳定自动化任务挑战
+
 ## 📄 许可证
 
 Apache-2.0 License
