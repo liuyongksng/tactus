@@ -2,9 +2,11 @@ English | [简体中文](README_ch.md)
 
 # ![icon](public/icon/32.png) Tactus
 
-**The First Browser AI Assistant Extension with Agent Skills Support**
+**The First Browser AI Agent Extension with Agent Skills Support**
 
-Tactus is an innovative browser extension that brings the [Agent Skills](https://agentskills.io/specification) specification to the browser environment, enabling AI assistants to perform complex tasks through an extensible skill system.
+Tactus is an innovative browser extension that brings the [Agent Skills](https://agentskills.io/specification) specification to the browser environment, enabling AI Agent to perform complex tasks through an extensible skill system.
+
+Triggering skills can achieve prompt injection for specific scenarios, and common workflows can be encapsulated in scripts for execution, replacing repetitive automated operations of AI Agents. This approach is both fast and token-efficient.
 
 <!-- Demo GIF placeholder -->
 ![Tactus Demo](resources/trust-skill.png)
@@ -179,4 +181,4 @@ Apache-2.0 License
 
 ---
 
-**Tactus** - Empowering Browser AI Assistants with Unlimited Possibilities 🚀
+**Tactus** - granting AI the sense of touch to navigate the web 🚀
