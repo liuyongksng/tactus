@@ -86,6 +86,240 @@ const reasoningExpanded = ref<Record<number, boolean>>({});
 // 切换思维链展开/折叠
 function toggleReasoning(idx: number) {
   reasoningExpanded.value[idx] = !reasoningExpanded.value[idx];
+}
+
+// 编辑和复制状态
+const editingMessageIndex = ref<number | null>(null);
+const editingContent = ref<string>('');
+const editingQuote = ref<string | null>(null);
+const copiedMessageIndex = ref<number | null>(null);
+
+// 计算属性
+const isEditing = computed(() => editingMessageIndex.value !== null);
+const canSendMessage = computed(() => !isEditing.value && !isLoading.value);
+
+// 复制消息（仅 AI 回复）
+async function copyMessage(index: number): Promise<void> {
+  const message = messages.value[index];
+  if (!message.content || message.role !== 'assistant') return;
+  
+  try {
+    await navigator.clipboard.writeText(message.content);
+    
+    // 显示已复制状态
+    copiedMessageIndex.value = index;
+    
+    // 2 秒后恢复
+    setTimeout(() => {
+      if (copiedMessageIndex.value === index) {
+        copiedMessageIndex.value = null;
+      }
+    }, 2000);
+  } catch (error) {
+    console.error('Failed to copy:', error);
+    // 降级方案
+    copyMessageFallback(message.content);
+  }
+}
+
+// 复制降级方案
+function copyMessageFallback(content: string): void {
+  const textarea = document.createElement('textarea');
+  textarea.value = content;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  
+  textarea.select();
+  try {
+    document.execCommand('copy');
+    copiedMessageIndex.value = -1; // 使用 -1 表示降级方案成功
+    setTimeout(() => {
+      copiedMessageIndex.value = null;
+    }, 2000);
+  } catch (error) {
+    alert('复制失败');
+  }
+  
+  document.body.removeChild(textarea);
+}
+
+// 编辑消息
+function startEditMessage(index: number): void {
+  const message = messages.value[index];
+  
+  // 只允许编辑用户消息
+  if (message.role !== 'user') return;
+  
+  // 保存编辑状态
+  editingMessageIndex.value = index;
+  editingContent.value = message.content;
+  editingQuote.value = message.quote || null;
+  
+  // 滚动到编辑位置并聚焦
+  nextTick(() => {
+    scrollToBottom();
+  });
+}
+
+// 取消编辑
+function cancelEditMessage(): void {
+  editingMessageIndex.value = null;
+  editingContent.value = '';
+  editingQuote.value = null;
+}
+
+// 移除编辑中的引用
+function removeEditingQuote(): void {
+  editingQuote.value = null;
+}
+
+// 保存编辑并重新生成
+async function saveEditMessage(): Promise<void> {
+  if (editingMessageIndex.value === null) return;
+  
+  const newContent = editingContent.value.trim();
+  if (!newContent) {
+    alert('消息不能为空');
+    return;
+  }
+  
+  if (!currentSession.value) {
+    alert('会话不存在');
+    cancelEditMessage();
+    return;
+  }
+  
+  const index = editingMessageIndex.value;
+  
+  // 更新消息内容
+  messages.value[index].content = newContent;
+  messages.value[index].quote = editingQuote.value || undefined;
+  messages.value[index].timestamp = Date.now();
+  
+  // 删除该消息之后的所有消息
+  messages.value = messages.value.slice(0, index + 1);
+  
+  // 清空编辑状态
+  cancelEditMessage();
+  
+  // 触发重新生成
+  await regenerateResponse();
+}
+
+// 重新生成 AI 回复
+async function regenerateResponse(): Promise<void> {
+  if (!currentSession.value) return;
+  
+  const provider = await getActiveProvider();
+  if (!provider) {
+    alert('未配置模型');
+    return;
+  }
+  
+  isLoading.value = true;
+  toolStatus.value = null;
+  
+  try {
+    const assistantMessage: ChatMessage = {
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+    };
+    messages.value.push(assistantMessage);
+    triggerRef(messages);
+    scrollToBottom();
+    
+    // 使用 ReAct 范式的流式聊天
+    const reactConfig = {
+      enableTools: true,
+      toolExecutor,
+      maxIterations: 10,
+    };
+    
+    // 构建 Skills 信息
+    const skillsInfo: SkillInfo[] = installedSkills.value.map(s => ({
+      name: s.metadata.name,
+      description: s.metadata.description,
+    }));
+    
+    // 获取当前页面信息
+    let pageInfo: { domain: string; title: string; url: string } | undefined;
+    if (sharePageContent.value) {
+      try {
+        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+        if (tab?.url && tab?.title) {
+          const urlObj = new URL(tab.url);
+          pageInfo = {
+            domain: urlObj.hostname,
+            title: tab.title,
+            url: tab.url,
+          };
+        }
+      } catch (e) {
+        console.error('Failed to get page info:', e);
+      }
+    }
+    
+    // 获取当前语言设置
+    const currentLanguage = await getLanguage();
+    
+    for await (const event of streamChat(
+      provider,
+      messages.value.slice(0, -1),
+      { sharePageContent: sharePageContent.value, skills: skillsInfo, pageInfo, language: currentLanguage },
+      reactConfig
+    )) {
+      switch (event.type) {
+        case 'reasoning':
+          if (!assistantMessage.reasoning) {
+            assistantMessage.reasoning = '';
+          }
+          assistantMessage.reasoning += event.content;
+          triggerRef(messages);
+          break;
+        case 'content':
+          isLoading.value = false;
+          assistantMessage.content += event.content;
+          triggerRef(messages);
+          break;
+        case 'tool_call':
+          isLoading.value = true;
+          toolStatus.value = getToolStatusText(event.toolCall.name, event.toolCall.arguments);
+          break;
+        case 'thinking':
+          toolStatus.value = event.message;
+          break;
+        case 'tool_result':
+          toolStatus.value = null;
+          if (assistantMessage.content && !assistantMessage.content.endsWith('\n')) {
+            assistantMessage.content += '\n';
+          }
+          triggerRef(messages);
+          break;
+        case 'done':
+          toolStatus.value = null;
+          assistantMessage.content = assistantMessage.content.trim();
+          if (assistantMessage.reasoning) {
+            assistantMessage.reasoning = assistantMessage.reasoning.trim();
+          }
+          break;
+      }
+    }
+    
+    assistantMessage.timestamp = Date.now();
+  } catch (error: any) {
+    messages.value.push({
+      role: 'assistant',
+      content: `重新生成失败: ${error.message}`,
+      timestamp: Date.now(),
+    });
+    triggerRef(messages);
+  } finally {
+    isLoading.value = false;
+    toolStatus.value = null;
+    await saveCurrentSession();
+  }
 }// Skills state
 const installedSkills = ref<Skill[]>([]);
 const showScriptConfirmModal = ref(false);
@@ -474,7 +708,7 @@ function handleSessionListScroll(e: Event) {
 // Send message
 async function sendMessage() {
   const text = inputText.value.trim();
-  if (!text || isLoading.value) return;
+  if (!text || isLoading.value || isEditing.value) return;
 
   const provider = await getActiveProvider();
   if (!provider) {
@@ -867,30 +1101,100 @@ function rejectScript() {
 
         <div class="message" :class="msg.role">
           <div v-if="msg.content || msg.reasoning" class="message-time">{{ formatTime(msg.timestamp) }}</div>
-          <div v-if="msg.quote" class="quote">"{{ msg.quote }}"</div>
           
-          <!-- 思维链折叠区域 -->
-          <div v-if="msg.reasoning" class="reasoning-section">
-            <button 
-              class="reasoning-toggle"
-              @click="toggleReasoning(idx)"
-              :class="{ expanded: reasoningExpanded[idx] }"
-            >
-              <svg class="reasoning-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
-              </svg>
-              <span class="reasoning-label">{{ currentLanguage === 'zh-CN' ? '思维链' : 'Reasoning' }}</span>
-              <svg class="reasoning-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M6 9l6 6 6-6"/>
-              </svg>
-            </button>
-            <div v-if="reasoningExpanded[idx]" class="reasoning-content">
-              <div class="reasoning-text" v-html="renderMarkdown(msg.reasoning)"></div>
+          <!-- 编辑模式 -->
+          <div v-if="editingMessageIndex === idx" class="message-edit-mode">
+            <!-- 引用内容（如果有） -->
+            <div v-if="editingQuote" class="edit-quote">
+              <div class="quote-content">"{{ editingQuote }}"</div>
+              <button class="remove-quote-btn" @click="removeEditingQuote" title="移除引用">×</button>
+            </div>
+            
+            <!-- 编辑文本框 -->
+            <textarea
+              v-model="editingContent"
+              class="edit-textarea"
+              rows="3"
+              placeholder="编辑您的消息..."
+              @keydown.ctrl.enter="saveEditMessage"
+              @keydown.meta.enter="saveEditMessage"
+              @keydown.esc="cancelEditMessage"
+            ></textarea>
+            
+            <!-- 操作按钮 -->
+            <div class="edit-actions">
+              <button class="btn btn-outline btn-sm" @click="cancelEditMessage">
+                取消
+              </button>
+              <button class="btn btn-primary btn-sm" @click="saveEditMessage" :disabled="!editingContent.trim()">
+                保存并重新生成
+              </button>
             </div>
           </div>
           
-          <div v-if="msg.role === 'assistant'" class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
-          <div v-else v-html="msg.content.replace(/\n/g, '<br>')"></div>
+          <!-- 正常显示模式 -->
+          <template v-else>
+            <div v-if="msg.quote" class="quote">"{{ msg.quote }}"</div>
+            
+            <!-- 消息操作按钮 -->
+            <div class="message-actions">
+              <!-- 编辑按钮（仅用户消息） -->
+              <button 
+                v-if="msg.role === 'user' && !isEditing"
+                class="message-action-btn edit-btn"
+                @click="startEditMessage(idx)"
+                title="编辑消息"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+              </button>
+              
+              <!-- 复制按钮（仅 AI 回复） -->
+              <button 
+                v-if="msg.role === 'assistant'"
+                class="message-action-btn copy-btn"
+                @click="copyMessage(idx)"
+                :title="copiedMessageIndex === idx ? '已复制！' : '复制消息'"
+                :class="{ copied: copiedMessageIndex === idx }"
+              >
+                <!-- 未复制状态 -->
+                <svg v-if="copiedMessageIndex !== idx" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                </svg>
+                
+                <!-- 已复制状态 -->
+                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              </button>
+            </div>
+          
+            <!-- 思维链折叠区域 -->
+            <div v-if="msg.reasoning" class="reasoning-section">
+              <button 
+                class="reasoning-toggle"
+                @click="toggleReasoning(idx)"
+                :class="{ expanded: reasoningExpanded[idx] }"
+              >
+                <svg class="reasoning-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                </svg>
+                <span class="reasoning-label">{{ currentLanguage === 'zh-CN' ? '思维链' : 'Reasoning' }}</span>
+                <svg class="reasoning-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M6 9l6 6 6-6"/>
+                </svg>
+              </button>
+              <div v-if="reasoningExpanded[idx]" class="reasoning-content">
+                <div class="reasoning-text" v-html="renderMarkdown(msg.reasoning)"></div>
+              </div>
+            </div>
+            
+            <div v-if="msg.role === 'assistant'" class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
+            <div v-else v-html="msg.content.replace(/\n/g, '<br>')"></div>
+          </template>
         </div>
       </template>
 
@@ -959,7 +1263,7 @@ function rejectScript() {
             <div v-if="showModelSelector" class="model-backdrop" @click="showModelSelector = false"></div>
           </div>
           <!-- Send button -->
-          <button class="send-btn" @click="sendMessage" :disabled="isLoading || !inputText.trim()">
+          <button class="send-btn" @click="sendMessage" :disabled="isLoading || !inputText.trim() || isEditing">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
             </svg>

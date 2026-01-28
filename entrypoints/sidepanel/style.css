@@ -1489,3 +1489,149 @@ body {
 .reasoning-content::-webkit-scrollbar-thumb:hover {
   background: var(--border-hover);
 }
+
+
+/* ========== Message Edit & Copy Features ========== */
+
+/* Message actions container */
+.message-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+
+.message:hover .message-actions {
+  opacity: 1;
+}
+
+/* Action buttons base style */
+.message-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: all 200ms ease-out;
+  box-shadow: var(--shadow-sm);
+}
+
+.message-action-btn:hover {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.message-action-btn:active {
+  transform: translateY(0);
+}
+
+/* Edit button specific style */
+.edit-btn:hover {
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+/* Copy button specific style */
+.copy-btn:hover {
+  color: #10B981;
+  border: 1px solid #10B981;
+}
+
+.copy-btn.copied {
+  color: #10B981;
+  background: #F0FDF4;
+  border: 1px solid #10B981;
+}
+
+/* Edit mode container */
+.message-edit-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  background: var(--card);
+  box-shadow: var(--shadow-md);
+}
+
+/* Edit quote display */
+.edit-quote {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(184, 134, 11, 0.08);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+}
+
+.quote-content {
+  flex: 1;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+.remove-quote-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 200ms ease-out;
+  border-radius: 4px;
+}
+
+.remove-quote-btn:hover {
+  color: #C53030;
+  background: #FFF5F5;
+}
+
+/* Edit textarea */
+.edit-textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 12px 14px;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.6;
+  resize: vertical;
+  outline: none;
+  background: var(--card);
+  color: var(--foreground);
+  transition: border-color 150ms ease-out;
+}
+
+.edit-textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(184, 134, 11, 0.1);
+}
+
+.edit-textarea::placeholder {
+  color: rgba(107, 107, 107, 0.6);
+}
+
+/* Edit actions */
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
