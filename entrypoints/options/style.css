@@ -24,6 +24,41 @@
   --font-mono: "IBM Plex Mono", monospace;
 }
 
+/* Dark Theme */
+[data-theme="dark"] {
+  --background: #121212;
+  --foreground: #E8E4DF;
+  --muted: #1E1E1E;
+  --muted-foreground: #9A9A9A;
+  --accent: #D4A84B;
+  --accent-secondary: #B8860B;
+  --accent-foreground: #121212;
+  --border: #2A2A2A;
+  --card: #1A1A1A;
+  --ring: #D4A84B;
+  --input: #2A2A2A;
+  --border-hover: #3A3A3A;
+  --danger: #FC8181;
+  --danger-bg: rgba(252, 129, 129, 0.1);
+  
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.3);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
+}
+
+[data-theme="dark"] .import-warnings {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: #D97706;
+}
+
+[data-theme="dark"] .warning-title {
+  color: #FBBF24;
+}
+
+[data-theme="dark"] .import-warnings ul {
+  color: #FCD34D;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -1129,4 +1164,75 @@ body {
     flex: 1;
     text-align: center;
   }
+}
+
+
+/* 设置分隔线 */
+.settings-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0;
+}
+
+/* 开关按钮 */
+.toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+
+.toggle-track {
+  position: relative;
+  width: 48px;
+  height: 26px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  transition: all 200ms ease-out;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background: var(--card);
+  border-radius: 50%;
+  box-shadow: var(--shadow-sm);
+  transition: all 200ms ease-out;
+}
+
+.toggle-btn.active .toggle-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toggle-btn.active .toggle-thumb {
+  left: 24px;
+  background: var(--accent-foreground);
+}
+
+.toggle-btn:hover .toggle-track {
+  border-color: var(--border-hover);
+}
+
+.toggle-btn.active:hover .toggle-track {
+  background: var(--accent-secondary);
+  border-color: var(--accent-secondary);
+}
+
+.toggle-label {
+  font-size: 13px;
+  color: var(--muted-foreground);
+  transition: color 200ms ease-out;
+}
+
+.toggle-btn.active .toggle-label {
+  color: var(--accent);
 }

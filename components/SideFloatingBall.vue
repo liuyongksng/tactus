@@ -14,6 +14,7 @@ const posY = ref(50); // 百分比位置
 const isDragging = ref(false);
 const startY = ref(0);
 const startPosY = ref(0);
+const isHovering = ref(false);
 
 // 拖动处理
 const onMouseDown = (e: MouseEvent) => {
@@ -64,11 +65,19 @@ const onTouchEnd = () => {
 };
 
 // 点击处理（区分拖动和点击）
-const clickStartY = ref(0);
 const handleClick = () => {
   if (Math.abs(posY.value - startPosY.value) < 2) {
     emit('click');
   }
+};
+
+// 悬停处理
+const onMouseEnter = () => {
+  isHovering.value = true;
+};
+
+const onMouseLeave = () => {
+  isHovering.value = false;
 };
 
 onMounted(() => {
@@ -89,14 +98,18 @@ onUnmounted(() => {
 <template>
   <div
     class="side-floating-ball"
-    :class="{ 'is-dragging': isDragging }"
+    :class="{ 'is-dragging': isDragging, 'is-hovering': isHovering }"
     :style="{ top: `${posY}%` }"
     @mousedown="onMouseDown"
     @touchstart="onTouchStart"
     @click="handleClick"
+    @mouseenter="onMouseEnter"
+    @mouseleave="onMouseLeave"
   >
-    <div class="ball-inner">
-      <img :src="props.iconUrl" alt="Tactus" width="28" height="28" />
+    <div class="ball-container">
+      <div class="ball-inner">
+        <img :src="props.iconUrl" alt="Tactus" width="28" height="28" />
+      </div>
     </div>
     <div class="ball-tooltip">Tactus</div>
   </div>
@@ -117,6 +130,13 @@ onUnmounted(() => {
 
 .side-floating-ball.is-dragging {
   cursor: grabbing;
+}
+
+.ball-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
 }
 
 .ball-inner {
@@ -145,6 +165,7 @@ onUnmounted(() => {
 .ball-tooltip {
   position: absolute;
   right: 52px;
+  top: 4px;
   background: #FAFAF8;
   color: #1A1A1A;
   padding: 8px 12px;

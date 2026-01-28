@@ -2,9 +2,11 @@
 
 # ![icon](public/icon/32.png) Tactus
 
-**首个支持 Agent Skills 的浏览器 AI 助手扩展**
+**首个支持 Agent Skills 的浏览器 AI Agent 扩展**
 
-Tactus 是一款创新的浏览器扩展，将 [Agent Skills](https://agentskills.io/specification) 规范引入浏览器环境，让 AI 助手能够通过可扩展的技能系统执行复杂任务。
+Tactus 是一款创新的浏览器扩展，将 [Agent Skills](https://agentskills.io/specification) 规范引入浏览器环境，让 AI Agent 能够通过可扩展的技能系统执行复杂任务。
+
+触发 skills 可实现特定场景的提示词注入，常用工作流可封装在脚本中执行，代替 AI Agent 重复的自动化操作，既快速又省token。
 
 <!-- 演示动图占位符 -->
 ![Tactus 演示](resources/trust-skill.png)
@@ -173,10 +175,17 @@ tactus/
 
 欢迎提交 Issue 和 Pull Request！
 
+## 🚧 未来发展路线图
+
+我们对 Tactus 的未来发展有着激动人心的计划：
+- [ ] 引入 CDP 自动化作为 Agent 的工具，可人工接管介入
+- [ ] 操作录制一键生成可复用的 skills
+- [ ] 长时稳定自动化任务挑战
+
 ## 📄 许可证
 
 Apache-2.0 License
 
 ---
 
-**Tactus** - 让浏览器 AI 助手拥有无限可能 🚀
+**Tactus** - 赋予 AI 触觉，代你行走网络 🚀
