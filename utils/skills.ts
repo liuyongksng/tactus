@@ -13,15 +13,17 @@ export type {
 
 export type { TrustedScript } from './storage';
 
+// Skill CRUD
 export {
-  // Skill CRUD
   getAllSkills,
   getSkill,
   getSkillByName,
   saveSkill,
   deleteSkill,
-  
-  // Skill Files
+} from './db';
+
+// Skill Files
+export {
   saveSkillFile,
   getSkillFile,
   getSkillFiles,
@@ -29,8 +31,8 @@ export {
   getSkillFileAsText,
 } from './db';
 
+// Trusted Scripts (from WXT storage)
 export {
-  // Trusted Scripts (from WXT storage)
   isScriptTrusted,
   trustScript,
   untrustScript,

@@ -10,8 +10,14 @@ import {
   watchActiveProviderId,
   getLanguage,
   watchLanguage,
+  getThemeMode,
+  setThemeMode,
+  watchThemeMode,
+  applyTheme,
+  getResolvedTheme,
   type AIProvider,
   type Language,
+  type ThemeMode,
 } from '../../utils/storage';
 import {
   getSharePageContent,
@@ -47,6 +53,10 @@ function renderMarkdown(content: string): string {
 
 // Language state
 const currentLanguage = ref<Language>('en');
+
+// Theme state
+const currentThemeMode = ref<ThemeMode>('system');
+const showThemeSelector = ref(false);
 
 // 国际化辅助函数
 const i18n = (key: keyof Translations, params?: Record<string, string | number>) => {
@@ -151,6 +161,8 @@ function formatSessionDate(timestamp: number): string {
 const unwatchProviders = ref<(() => void) | null>(null);
 const unwatchActiveProviderId = ref<(() => void) | null>(null);
 const unwatchLanguage = ref<(() => void) | null>(null);
+const unwatchThemeMode = ref<(() => void) | null>(null);
+const systemThemeMediaQuery = ref<MediaQueryList | null>(null);
 
 onMounted(async () => {
   providers.value = await getAllProviders();
@@ -160,6 +172,14 @@ onMounted(async () => {
   
   // 加载语言设置
   currentLanguage.value = await getLanguage();
+  
+  // 加载主题设置
+  currentThemeMode.value = await getThemeMode();
+  applyTheme(currentThemeMode.value);
+  
+  // 监听系统主题变化
+  systemThemeMediaQuery.value = window.matchMedia('(prefers-color-scheme: dark)');
+  systemThemeMediaQuery.value.addEventListener('change', handleSystemThemeChange);
   
   // 加载已安装的 Skills
   installedSkills.value = await getAllSkills();
@@ -188,6 +208,12 @@ onMounted(async () => {
   // 监听语言变化（跨页面同步）
   unwatchLanguage.value = watchLanguage((newLang) => {
     currentLanguage.value = newLang;
+  });
+  
+  // 监听主题变化（跨页面同步）
+  unwatchThemeMode.value = watchThemeMode((newMode) => {
+    currentThemeMode.value = newMode;
+    applyTheme(newMode);
   });
 
   // 监听 skills 变更消息
@@ -218,11 +244,37 @@ function handleSkillsChanged(message: any) {
   }
 }
 
+// 系统主题变化处理
+function handleSystemThemeChange() {
+  if (currentThemeMode.value === 'system') {
+    applyTheme('system');
+  }
+}
+
+// 切换主题
+async function changeThemeMode(mode: ThemeMode) {
+  currentThemeMode.value = mode;
+  await setThemeMode(mode);
+  applyTheme(mode);
+  showThemeSelector.value = false;
+}
+
+// 获取当前主题图标类型
+const currentThemeIcon = computed(() => {
+  if (currentThemeMode.value === 'system') {
+    return getResolvedTheme('system');
+  }
+  return currentThemeMode.value;
+});
+
 // 清理 watchers
 onUnmounted(() => {
   unwatchProviders.value?.();
   unwatchActiveProviderId.value?.();
   unwatchLanguage.value?.();
+  unwatchThemeMode.value?.();
+  // 移除系统主题监听
+  systemThemeMediaQuery.value?.removeEventListener('change', handleSystemThemeChange);
   // 移除 skills 变更监听
   browser.runtime.onMessage.removeListener(handleSkillsChanged);
   // 清理调试面板刷新定时器
@@ -809,6 +861,44 @@ function rejectScript() {
     <div class="header">
       <h1>Tactus</h1>
       <div class="header-actions">
+        <!-- Theme Selector -->
+        <div class="theme-selector-wrapper">
+          <button class="icon-btn" @click="showThemeSelector = !showThemeSelector" :title="currentLanguage === 'zh-CN' ? '主题' : 'Theme'">
+            <!-- Sun icon for light -->
+            <svg v-if="currentThemeIcon === 'light'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="5"/>
+              <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+            </svg>
+            <!-- Moon icon for dark -->
+            <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+            </svg>
+          </button>
+          <!-- Theme dropdown -->
+          <div v-if="showThemeSelector" class="theme-dropdown">
+            <div class="theme-option" :class="{ active: currentThemeMode === 'light' }" @click="changeThemeMode('light')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="5"/>
+                <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+              </svg>
+              <span>{{ currentLanguage === 'zh-CN' ? '浅色' : 'Light' }}</span>
+            </div>
+            <div class="theme-option" :class="{ active: currentThemeMode === 'dark' }" @click="changeThemeMode('dark')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+              </svg>
+              <span>{{ currentLanguage === 'zh-CN' ? '深色' : 'Dark' }}</span>
+            </div>
+            <div class="theme-option" :class="{ active: currentThemeMode === 'system' }" @click="changeThemeMode('system')">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                <path d="M8 21h8M12 17v4"/>
+              </svg>
+              <span>{{ currentLanguage === 'zh-CN' ? '跟随系统' : 'System' }}</span>
+            </div>
+          </div>
+          <div v-if="showThemeSelector" class="theme-backdrop" @click="showThemeSelector = false"></div>
+        </div>
         <button class="icon-btn" @click="viewDebugMessages" title="API Context">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>

@@ -37,6 +37,42 @@ const trustedScriptsStorage = storage.defineItem<TrustedScript[]>('local:trusted
   fallback: [],
 });
 
+// ==================== Theme Settings ====================
+
+export type ThemeMode = 'light' | 'dark' | 'system';
+
+const themeModeStorage = storage.defineItem<ThemeMode>('local:themeMode', {
+  fallback: 'system',
+});
+
+export async function getThemeMode(): Promise<ThemeMode> {
+  return await themeModeStorage.getValue();
+}
+
+export async function setThemeMode(mode: ThemeMode): Promise<void> {
+  await themeModeStorage.setValue(mode);
+}
+
+export function watchThemeMode(callback: (mode: ThemeMode) => void): () => void {
+  return themeModeStorage.watch((newValue) => {
+    callback(newValue);
+  });
+}
+
+// 根据主题模式获取实际应用的主题
+export function getResolvedTheme(mode: ThemeMode): 'light' | 'dark' {
+  if (mode === 'system') {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  return mode;
+}
+
+// 应用主题到 document
+export function applyTheme(mode: ThemeMode): void {
+  const theme = getResolvedTheme(mode);
+  document.documentElement.setAttribute('data-theme', theme);
+}
+
 // ==================== Language Settings ====================
 
 export type Language = 'en' | 'zh-CN';
@@ -207,8 +243,8 @@ export type {
   ChatSession,
 } from './db';
 
+// Session functions
 export {
-  // Session functions
   getAllSessions,
   getSession,
   getCurrentSession,
@@ -217,8 +253,10 @@ export {
   updateSession,
   deleteSession,
   generateSessionTitle,
-  
-  // Settings
+} from './db';
+
+// Settings
+export {
   getSharePageContent,
   setSharePageContent,
 } from './db';

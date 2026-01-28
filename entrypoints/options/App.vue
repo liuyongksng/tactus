@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
 import {
   getAllProviders,
   getActiveProvider,
@@ -14,6 +14,9 @@ import {
   setFloatingBallEnabled,
   getSelectionQuoteEnabled,
   setSelectionQuoteEnabled,
+  getThemeMode,
+  watchThemeMode,
+  applyTheme,
   type AIProvider,
   type TrustedScript,
   type Language,
@@ -37,6 +40,10 @@ const floatingBallEnabled = ref(true);
 
 // 划词引用设置
 const selectionQuoteEnabled = ref(true);
+
+// 主题监听
+const unwatchThemeMode = ref<(() => void) | null>(null);
+const systemThemeMediaQuery = ref<MediaQueryList | null>(null);
 
 // 国际化辅助函数
 const i18n = (key: keyof Translations, params?: Record<string, string | number>) => {
@@ -88,6 +95,32 @@ onMounted(async () => {
   floatingBallEnabled.value = await getFloatingBallEnabled();
   // 加载划词引用设置
   selectionQuoteEnabled.value = await getSelectionQuoteEnabled();
+  
+  // 加载并应用主题
+  const themeMode = await getThemeMode();
+  applyTheme(themeMode);
+  
+  // 监听系统主题变化
+  systemThemeMediaQuery.value = window.matchMedia('(prefers-color-scheme: dark)');
+  systemThemeMediaQuery.value.addEventListener('change', handleSystemThemeChange);
+  
+  // 监听主题变化（跨页面同步）
+  unwatchThemeMode.value = watchThemeMode((newMode) => {
+    applyTheme(newMode);
+  });
+});
+
+// 系统主题变化处理
+async function handleSystemThemeChange() {
+  const themeMode = await getThemeMode();
+  if (themeMode === 'system') {
+    applyTheme('system');
+  }
+}
+
+onUnmounted(() => {
+  unwatchThemeMode.value?.();
+  systemThemeMediaQuery.value?.removeEventListener('change', handleSystemThemeChange);
 });
 
 async function loadSkills() {
