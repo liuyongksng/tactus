@@ -10,6 +10,10 @@ import {
   untrustScript,
   getLanguage,
   setLanguage,
+  getFloatingBallEnabled,
+  setFloatingBallEnabled,
+  getSelectionQuoteEnabled,
+  setSelectionQuoteEnabled,
   type AIProvider,
   type TrustedScript,
   type Language,
@@ -27,6 +31,12 @@ const activeNav = ref<'models' | 'skills' | 'settings'>('models');
 
 // 语言设置
 const currentLanguage = ref<Language>('en');
+
+// 悬浮球设置
+const floatingBallEnabled = ref(true);
+
+// 划词引用设置
+const selectionQuoteEnabled = ref(true);
 
 // 国际化辅助函数
 const i18n = (key: keyof Translations, params?: Record<string, string | number>) => {
@@ -74,6 +84,10 @@ onMounted(async () => {
   await loadSkills();
   // 加载语言设置
   currentLanguage.value = await getLanguage();
+  // 加载悬浮球设置
+  floatingBallEnabled.value = await getFloatingBallEnabled();
+  // 加载划词引用设置
+  selectionQuoteEnabled.value = await getSelectionQuoteEnabled();
 });
 
 async function loadSkills() {
@@ -252,6 +266,18 @@ function formatDate(timestamp: number): string {
 async function handleLanguageChange(lang: Language) {
   currentLanguage.value = lang;
   await setLanguage(lang);
+}
+
+// 悬浮球开关切换
+async function handleFloatingBallToggle(enabled: boolean) {
+  floatingBallEnabled.value = enabled;
+  await setFloatingBallEnabled(enabled);
+}
+
+// 划词引用开关切换
+async function handleSelectionQuoteToggle(enabled: boolean) {
+  selectionQuoteEnabled.value = enabled;
+  await setSelectionQuoteEnabled(enabled);
 }
 </script>
 
@@ -497,6 +523,59 @@ async function handleLanguageChange(lang: Language) {
                       简体中文
                     </button>
                   </div>
+                </div>
+              </div>
+              
+              <div class="settings-divider"></div>
+              
+              <div class="settings-item">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="10"/>
+                      <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                    <span>{{ i18n('floatingBall') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('floatingBallDesc') }}</p>
+                </div>
+                <div class="settings-item-control">
+                  <button 
+                    class="toggle-btn"
+                    :class="{ active: floatingBallEnabled }"
+                    @click="handleFloatingBallToggle(!floatingBallEnabled)"
+                  >
+                    <span class="toggle-track">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                    <span class="toggle-label">{{ floatingBallEnabled ? i18n('floatingBallEnabled') : i18n('floatingBallDisabled') }}</span>
+                  </button>
+                </div>
+              </div>
+              
+              <div class="settings-divider"></div>
+              
+              <div class="settings-item">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M17 3a2.85 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+                    </svg>
+                    <span>{{ i18n('selectionQuote') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('selectionQuoteDesc') }}</p>
+                </div>
+                <div class="settings-item-control">
+                  <button 
+                    class="toggle-btn"
+                    :class="{ active: selectionQuoteEnabled }"
+                    @click="handleSelectionQuoteToggle(!selectionQuoteEnabled)"
+                  >
+                    <span class="toggle-track">
+                      <span class="toggle-thumb"></span>
+                    </span>
+                    <span class="toggle-label">{{ selectionQuoteEnabled ? i18n('floatingBallEnabled') : i18n('floatingBallDisabled') }}</span>
+                  </button>
                 </div>
               </div>
             </div>

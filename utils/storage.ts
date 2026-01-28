@@ -59,6 +59,46 @@ export function watchLanguage(callback: (lang: Language) => void): () => void {
   });
 }
 
+// ==================== Floating Ball Settings ====================
+
+const floatingBallEnabledStorage = storage.defineItem<boolean>('local:floatingBallEnabled', {
+  fallback: true,
+});
+
+export async function getFloatingBallEnabled(): Promise<boolean> {
+  return await floatingBallEnabledStorage.getValue();
+}
+
+export async function setFloatingBallEnabled(enabled: boolean): Promise<void> {
+  await floatingBallEnabledStorage.setValue(enabled);
+}
+
+export function watchFloatingBallEnabled(callback: (enabled: boolean) => void): () => void {
+  return floatingBallEnabledStorage.watch((newValue) => {
+    callback(newValue);
+  });
+}
+
+// ==================== Selection Quote Settings ====================
+
+const selectionQuoteEnabledStorage = storage.defineItem<boolean>('local:selectionQuoteEnabled', {
+  fallback: true,
+});
+
+export async function getSelectionQuoteEnabled(): Promise<boolean> {
+  return await selectionQuoteEnabledStorage.getValue();
+}
+
+export async function setSelectionQuoteEnabled(enabled: boolean): Promise<void> {
+  await selectionQuoteEnabledStorage.setValue(enabled);
+}
+
+export function watchSelectionQuoteEnabled(callback: (enabled: boolean) => void): () => void {
+  return selectionQuoteEnabledStorage.watch((newValue) => {
+    callback(newValue);
+  });
+}
+
 // 检测浏览器语言并返回匹配的语言设置
 export function detectBrowserLanguage(): Language {
   const browserLang = navigator.language || (navigator as any).userLanguage || 'en';

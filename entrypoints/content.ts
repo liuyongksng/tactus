@@ -1,6 +1,7 @@
 import { createApp } from 'vue';
 import FloatingButton from '../components/FloatingButton.vue';
 import SideFloatingBall from '../components/SideFloatingBall.vue';
+import { getFloatingBallEnabled, watchFloatingBallEnabled, getSelectionQuoteEnabled, watchSelectionQuoteEnabled } from '../utils/storage';
 
 // 获取选区末尾的精确位置（视口坐标，用于 fixed 定位）
 function getSelectionEndPosition(): { x: number; y: number } | null {
@@ -42,30 +43,73 @@ export default defineContentScript({
     let floatingUI: any = null;
     let sideFloatingBallUI: any = null;
     let selectedText = '';
+    let floatingBallEnabled = true;
+    let selectionQuoteEnabled = true;
     
     // 预先获取图标 URL
     const iconUrl = browser.runtime.getURL('/icon/32.png');
 
-    // 创建右侧悬浮球 - 使用 overlay 定位
-    sideFloatingBallUI = await createShadowRootUi(ctx, {
-      name: 'side-floating-ball',
-      position: 'overlay',
-      anchor: 'body',
-      onMount: (container) => {
-        const app = createApp(SideFloatingBall, {
-          iconUrl: iconUrl,
-          onClick: () => {
-            browser.runtime.sendMessage({ type: 'TOGGLE_SIDEPANEL' });
-          },
-        });
-        app.mount(container);
-        return app;
-      },
-      onRemove: (app) => {
-        app?.unmount();
-      },
+    // 获取设置
+    floatingBallEnabled = await getFloatingBallEnabled();
+    selectionQuoteEnabled = await getSelectionQuoteEnabled();
+
+    // 创建右侧悬浮球
+    const createSideFloatingBall = async () => {
+      if (sideFloatingBallUI) return;
+      
+      sideFloatingBallUI = await createShadowRootUi(ctx, {
+        name: 'side-floating-ball',
+        position: 'overlay',
+        anchor: 'body',
+        onMount: (container) => {
+          const app = createApp(SideFloatingBall, {
+            iconUrl: iconUrl,
+            onClick: () => {
+              browser.runtime.sendMessage({ type: 'TOGGLE_SIDEPANEL' });
+            },
+          });
+          app.mount(container);
+          return app;
+        },
+        onRemove: (app) => {
+          app?.unmount();
+        },
+      });
+      sideFloatingBallUI.mount();
+    };
+
+    // 移除悬浮球
+    const removeSideFloatingBall = () => {
+      if (sideFloatingBallUI) {
+        sideFloatingBallUI.remove();
+        sideFloatingBallUI = null;
+      }
+    };
+
+    // 根据设置显示/隐藏悬浮球
+    if (floatingBallEnabled) {
+      await createSideFloatingBall();
+    }
+
+    // 监听设置变化
+    watchFloatingBallEnabled(async (enabled) => {
+      floatingBallEnabled = enabled;
+      if (enabled) {
+        await createSideFloatingBall();
+      } else {
+        removeSideFloatingBall();
+      }
     });
-    sideFloatingBallUI.mount();
+
+    // 监听划词引用设置变化
+    watchSelectionQuoteEnabled((enabled) => {
+      selectionQuoteEnabled = enabled;
+      // 如果禁用，移除当前显示的浮动按钮
+      if (!enabled && floatingUI) {
+        floatingUI.remove();
+        floatingUI = null;
+      }
+    });
 
     // Listen for text selection
     document.addEventListener('mouseup', async (e) => {
@@ -80,6 +124,9 @@ export default defineContentScript({
         floatingUI.remove();
         floatingUI = null;
       }
+
+      // 如果划词引用功能被禁用，直接返回
+      if (!selectionQuoteEnabled) return;
 
       if (text && text.length > 0) {
         selectedText = text;

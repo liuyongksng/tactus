@@ -80,6 +80,12 @@ export interface Translations {
   generalSettingsDesc: string;
   language: string;
   languageDesc: string;
+  floatingBall: string;
+  floatingBallDesc: string;
+  floatingBallEnabled: string;
+  floatingBallDisabled: string;
+  selectionQuote: string;
+  selectionQuoteDesc: string;
   
   // Sidepanel
   newChat: string;
@@ -187,6 +193,12 @@ const en: Translations = {
   generalSettingsDesc: 'Configure extension options',
   language: 'Language',
   languageDesc: 'Select the language for interface and AI responses',
+  floatingBall: 'Floating Ball',
+  floatingBallDesc: 'Show floating ball on the right side of pages for quick access',
+  floatingBallEnabled: 'Enabled',
+  floatingBallDisabled: 'Disabled',
+  selectionQuote: 'Selection Quote',
+  selectionQuoteDesc: 'Show quick action button when selecting text on pages',
   
   // Sidepanel
   newChat: 'New Chat',
@@ -294,6 +306,12 @@ const zhCN: Translations = {
   generalSettingsDesc: '配置扩展的通用选项',
   language: '语言 / Language',
   languageDesc: '选择界面和 AI 回复的语言',
+  floatingBall: '悬浮球',
+  floatingBallDesc: '在页面右侧显示悬浮球，方便快速访问',
+  floatingBallEnabled: '已启用',
+  floatingBallDisabled: '已禁用',
+  selectionQuote: '划词引用',
+  selectionQuoteDesc: '选中页面文字时显示快捷操作按钮',
   
   // Sidepanel
   newChat: '新建对话',
