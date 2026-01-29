@@ -332,7 +332,8 @@ export async function* streamChat(
   messages: ChatMessage[],
   context?: { sharePageContent?: boolean; skills?: SkillInfo[]; pageInfo?: { domain: string; title: string; url?: string }; language?: Language },
   config?: FunctionCallingConfig,
-  retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG
+  retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG,
+  previousApiMessages?: ApiMessage[]  // 新增：传入之前保存的完整 API 上下文
 ): AsyncGenerator<StreamEvent, void, unknown> {
   const enableTools = config?.enableTools ?? true;
   const toolExecutor = config?.toolExecutor;
@@ -352,13 +353,33 @@ export async function* streamChat(
   const systemMessage = `${basePrompt}\n\n${contextPrompt}`;
 
   // 构建初始消息
-  const apiMessages: ApiMessage[] = [
-    { role: 'system', content: systemMessage },
-    ...messages.map(m => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.quote ? `[Quote: "${m.quote}"]\n\n${m.content}` : m.content,
-    })),
-  ];
+  let apiMessages: ApiMessage[];
+  
+  if (previousApiMessages && previousApiMessages.length > 0) {
+    // 如果有之前保存的 API 上下文，使用它并更新 system 消息
+    apiMessages = [...previousApiMessages];
+    // 更新 system 消息（可能上下文有变化）
+    if (apiMessages[0]?.role === 'system') {
+      apiMessages[0].content = systemMessage;
+    }
+    // 添加新的用户消息（最后一条）
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage && lastMessage.role === 'user') {
+      apiMessages.push({
+        role: 'user',
+        content: lastMessage.quote ? `[Quote: "${lastMessage.quote}"]\n\n${lastMessage.content}` : lastMessage.content,
+      });
+    }
+  } else {
+    // 没有之前的上下文，从 ChatMessage 构建
+    apiMessages = [
+      { role: 'system', content: systemMessage },
+      ...messages.map(m => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.quote ? `[Quote: "${m.quote}"]\n\n${m.content}` : m.content,
+      })),
+    ];
+  }
 
   lastApiMessages = [...apiMessages];
 

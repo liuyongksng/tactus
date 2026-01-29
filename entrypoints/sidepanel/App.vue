@@ -603,11 +603,18 @@ async function sendMessage() {
     // 获取当前语言设置
     const currentLanguage = await getLanguage();
 
+    // 获取之前保存的 API 上下文（包含完整的工具调用历史）
+    const previousApiMessages = currentSession.value?.apiMessages || getLastApiMessages();
+    // 只有当之前有消息时才传入（排除只有 system 消息的情况）
+    const hasValidPreviousContext = previousApiMessages.length > 1;
+
     for await (const event of streamChat(
       provider, 
       messages.value.slice(0, -1), 
       { sharePageContent: sharePageContent.value, skills: skillsInfo, pageInfo, language: currentLanguage }, 
-      reactConfig
+      reactConfig,
+      undefined, // retryConfig 使用默认值
+      hasValidPreviousContext ? previousApiMessages : undefined
     )) {
       switch (event.type) {
         case 'reasoning':
