@@ -104,6 +104,9 @@ const editingContent = ref<string>('');
 const editingQuote = ref<string | null>(null);
 const copiedMessageIndex = ref<number | null>(null);
 
+// 复制按钮位置状态（按消息索引存储：'top' | 'bottom'）
+const copyButtonPosition = ref<Record<number, 'top' | 'bottom'>>({});
+
 // 计算属性
 const isEditing = computed(() => editingMessageIndex.value !== null);
 const canSendMessage = computed(() => !isEditing.value && !isLoading.value);
@@ -130,6 +133,19 @@ async function copyMessage(index: number): Promise<void> {
     // 降级方案
     copyMessageFallback(message.content);
   }
+}
+
+// 处理消息鼠标移动，检测复制按钮应该显示在顶部还是底部
+function handleMessageMouseMove(event: MouseEvent, index: number): void {
+  const target = event.currentTarget as HTMLElement;
+  if (!target) return;
+  
+  const rect = target.getBoundingClientRect();
+  const mouseY = event.clientY;
+  const middleY = rect.top + rect.height / 2;
+  
+  // 鼠标在消息上半部分显示顶部按钮，下半部分显示底部按钮
+  copyButtonPosition.value[index] = mouseY < middleY ? 'top' : 'bottom';
 }
 
 // 复制降级方案
@@ -166,10 +182,7 @@ function startEditMessage(index: number): void {
   editingContent.value = message.content;
   editingQuote.value = message.quote || null;
   
-  // 滚动到编辑位置并聚焦
-  nextTick(() => {
-    scrollToBottom();
-  });
+  // 不自动滚动，保持当前位置
 }
 
 // 取消编辑
@@ -202,6 +215,37 @@ async function saveEditMessage(): Promise<void> {
   
   const index = editingMessageIndex.value;
   
+  // 获取当前的 API 上下文
+  const currentApiMessages = currentSession.value.apiMessages || getLastApiMessages();
+  
+  // 计算被编辑的是第几条 user 消息（从 0 开始计数）
+  // messages 数组中包含 user 和 assistant，需要计算 index 位置是第几个 user
+  let userIndexInMessages = 0;
+  for (let i = 0; i < index; i++) {
+    if (messages.value[i]?.role === 'user') {
+      userIndexInMessages++;
+    }
+  }
+  // 此时 userIndexInMessages 表示被编辑的 user 消息是第几个（从 0 开始）
+  
+  // 在 apiMessages 中找到对应的 user 消息位置
+  // apiMessages 结构: [system, user1, assistant1?, tool?, ..., user2, assistant2?, ...]
+  let userCount = 0;
+  let apiCutIndex = 0;
+  for (let i = 0; i < currentApiMessages.length; i++) {
+    if (currentApiMessages[i].role === 'user') {
+      if (userCount === userIndexInMessages) {
+        // 找到了要编辑的用户消息在 apiMessages 中的位置
+        apiCutIndex = i;
+        break;
+      }
+      userCount++;
+    }
+  }
+  
+  // 截取 apiMessages：保留到被编辑消息之前的所有内容（不包括被编辑的消息本身）
+  const truncatedApiMessages = currentApiMessages.slice(0, apiCutIndex);
+  
   // 更新消息内容
   messages.value[index].content = newContent;
   messages.value[index].quote = editingQuote.value || undefined;
@@ -209,6 +253,14 @@ async function saveEditMessage(): Promise<void> {
   
   // 删除该消息之后的所有消息
   messages.value = messages.value.slice(0, index + 1);
+  
+  // 更新 API 上下文为截取后的版本
+  setLastApiMessages(truncatedApiMessages);
+  
+  // 同时更新会话中保存的 apiMessages
+  if (currentSession.value) {
+    currentSession.value.apiMessages = truncatedApiMessages;
+  }
   
   // 清空编辑状态
   cancelEditMessage();
@@ -274,11 +326,18 @@ async function regenerateResponse(): Promise<void> {
     // 获取当前语言设置
     const currentLanguage = await getLanguage();
     
+    // 获取之前保存的 API 上下文（已在 saveEditMessage 中正确截取）
+    const previousApiMessages = currentSession.value?.apiMessages || getLastApiMessages();
+    // 只有当之前有消息时才传入（排除只有 system 消息的情况）
+    const hasValidPreviousContext = previousApiMessages.length > 1;
+    
     for await (const event of streamChat(
       provider,
       messages.value.slice(0, -1),
       { sharePageContent: sharePageContent.value, skills: skillsInfo, pageInfo, language: currentLanguage },
-      reactConfig
+      reactConfig,
+      undefined, // retryConfig 使用默认值
+      hasValidPreviousContext ? previousApiMessages : undefined
     )) {
       switch (event.type) {
         case 'reasoning':
@@ -1032,11 +1091,15 @@ let debugRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 // 查看调试信息
 function viewDebugMessages() {
-  // 优先从当前会话获取持久化的 API 上下文，否则从内存获取
-  if (currentSession.value?.apiMessages?.length) {
+  // 始终从内存获取最新的 API 上下文（lastApiMessages 是实时更新的）
+  // 只有当内存中没有数据时，才从会话中获取持久化的数据
+  const memoryApiMessages = getLastApiMessages();
+  if (memoryApiMessages.length > 0) {
+    debugApiMessages.value = memoryApiMessages;
+  } else if (currentSession.value?.apiMessages?.length) {
     debugApiMessages.value = currentSession.value.apiMessages;
   } else {
-    debugApiMessages.value = getLastApiMessages();
+    debugApiMessages.value = [];
   }
   showDebugModal.value = true;
   
@@ -1045,9 +1108,10 @@ function viewDebugMessages() {
     clearInterval(debugRefreshTimer);
   }
   debugRefreshTimer = setInterval(() => {
-    // 只在加载中时实时刷新，避免不必要的更新
-    if (isLoading.value) {
-      debugApiMessages.value = getLastApiMessages();
+    // 始终从内存获取最新数据
+    const latestApiMessages = getLastApiMessages();
+    if (latestApiMessages.length > 0) {
+      debugApiMessages.value = latestApiMessages;
     }
   }, 500);
 }
@@ -1196,7 +1260,11 @@ function rejectScript() {
           <span v-else>{{ i18n('thinking') }}</span>
         </div>
 
-        <div class="message" :class="msg.role">
+        <div 
+          class="message" 
+          :class="msg.role"
+          @mousemove="msg.role === 'assistant' ? handleMessageMouseMove($event, idx) : undefined"
+        >
           <div v-if="msg.content || msg.reasoning" class="message-time">{{ formatTime(msg.timestamp) }}</div>
           
           <!-- 编辑模式 -->
@@ -1221,10 +1289,10 @@ function rejectScript() {
             <!-- 操作按钮 -->
             <div class="edit-actions">
               <button class="btn btn-outline btn-sm" @click="cancelEditMessage">
-                取消
+                {{ i18n('cancel') }}
               </button>
               <button class="btn btn-primary btn-sm" @click="saveEditMessage" :disabled="!editingContent.trim()">
-                保存并重新生成
+                {{ i18n('send') }}
               </button>
             </div>
           </div>
@@ -1233,14 +1301,14 @@ function rejectScript() {
           <template v-else>
             <div v-if="msg.quote" class="quote">"{{ msg.quote }}"</div>
             
-            <!-- 消息操作按钮 -->
-            <div class="message-actions">
+            <!-- 消息操作按钮（顶部悬浮） -->
+            <div class="message-actions" :class="{ 'force-hide': msg.role === 'assistant' && copyButtonPosition[idx] === 'bottom' }">
               <!-- 编辑按钮（仅用户消息） -->
               <button 
                 v-if="msg.role === 'user' && !isEditing"
                 class="message-action-btn edit-btn"
                 @click="startEditMessage(idx)"
-                title="编辑消息"
+                :title="i18n('editMessage')"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
@@ -1248,21 +1316,18 @@ function rejectScript() {
                 </svg>
               </button>
               
-              <!-- 复制按钮（仅 AI 回复） -->
+              <!-- AI 消息顶部复制按钮 -->
               <button 
-                v-if="msg.role === 'assistant'"
+                v-if="msg.role === 'assistant' && msg.content && copyButtonPosition[idx] !== 'bottom'"
                 class="message-action-btn copy-btn"
                 @click="copyMessage(idx)"
-                :title="copiedMessageIndex === idx ? '已复制！' : '复制消息'"
+                :title="copiedMessageIndex === idx ? i18n('copied') : i18n('copyMessage')"
                 :class="{ copied: copiedMessageIndex === idx }"
               >
-                <!-- 未复制状态 -->
                 <svg v-if="copiedMessageIndex !== idx" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                   <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
                 </svg>
-                
-                <!-- 已复制状态 -->
                 <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polyline points="20 6 9 17 4 12"/>
                 </svg>
@@ -1291,6 +1356,24 @@ function rejectScript() {
             
             <div v-if="msg.role === 'assistant'" class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
             <div v-else v-html="msg.content.replace(/\n/g, '<br>')"></div>
+            
+            <!-- AI 消息底部复制按钮（悬浮显示，仅当鼠标在下半部分时） -->
+            <div v-if="msg.role === 'assistant' && msg.content && copyButtonPosition[idx] === 'bottom'" class="message-actions-bottom">
+              <button 
+                class="message-action-btn copy-btn"
+                @click="copyMessage(idx)"
+                :title="copiedMessageIndex === idx ? i18n('copied') : i18n('copyMessage')"
+                :class="{ copied: copiedMessageIndex === idx }"
+              >
+                <svg v-if="copiedMessageIndex !== idx" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                </svg>
+                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              </button>
+            </div>
           </template>
         </div>
       </template>

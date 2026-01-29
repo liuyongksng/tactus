@@ -115,6 +115,13 @@ export interface Translations {
   activatingSkill: string;
   executingScript: string;
   readingFile: string;
+  
+  // 消息操作
+  editMessage: string;
+  copyMessage: string;
+  copy: string;
+  copied: string;
+  send: string;
 }
 
 // 英文翻译
@@ -228,6 +235,13 @@ const en: Translations = {
   activatingSkill: 'Activating Skill: {name}...',
   executingScript: 'Executing script: {skill}/{script}...',
   readingFile: 'Reading file: {skill}/{file}...',
+  
+  // 消息操作
+  editMessage: 'Edit message',
+  copyMessage: 'Copy message',
+  copy: 'Copy',
+  copied: 'Copied!',
+  send: 'Send',
 };
 
 // 简体中文翻译
@@ -341,6 +355,13 @@ const zhCN: Translations = {
   activatingSkill: '正在激活 Skill: {name}...',
   executingScript: '正在执行脚本: {skill}/{script}...',
   readingFile: '正在读取文件: {skill}/{file}...',
+  
+  // 消息操作
+  editMessage: '编辑消息',
+  copyMessage: '复制消息',
+  copy: '复制',
+  copied: '已复制！',
+  send: '发送',
 };
 
 // 翻译映射

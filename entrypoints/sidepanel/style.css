@@ -1747,3 +1747,21 @@ body {
   z-index: 999;
 }
 
+
+
+/* ========== Message Bottom Actions (AI 消息底部悬浮操作) ========== */
+.message-actions-bottom {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  opacity: 1;
+  transition: opacity 200ms ease-out;
+}
+
+/* 强制隐藏顶部按钮（当显示底部按钮时） */
+.message-actions.force-hide {
+  opacity: 0 !important;
+  pointer-events: none;
+}
