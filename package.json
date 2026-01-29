@@ -2,7 +2,7 @@
   "name": "tactus",
   "description": "AI Assistant with OpenAI-compatible API support",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "scripts": {
     "dev": "wxt",
