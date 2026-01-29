@@ -186,6 +186,10 @@ We have exciting plans for the future development of Tactus:
 
 Apache-2.0 License
 
+## ⭐ Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Castor6/tactus&type=Date)](https://star-history.com/#Castor6/tactus&Date)
+
 ---
 
 **Tactus** - granting AI the sense of touch to navigate the web 🚀
