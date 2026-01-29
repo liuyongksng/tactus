@@ -82,6 +82,8 @@ npm run dev
 npm run build
 ```
 
+5. Please use the Professional style within the `.claude\skills\design-style` skills to design with a unified extended UI style.
+
 ## 📖 User Guide
 
 ### Configure AI Provider

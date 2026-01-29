@@ -15,7 +15,6 @@ stats-*.json
 web-ext.config.ts
 
 # Editor directories and files
-.claude/skills/*
 .vscode/*
 .idea
 .DS_Store

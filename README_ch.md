@@ -82,6 +82,8 @@ npm run dev
 npm run build
 ```
 
+5. 请使用 `.claude\skills\design-style` skills 中的 Professional 风格，以统一扩展的 UI 风格设计
+
 ## 📖 使用指南
 
 ### 配置 AI 服务商
