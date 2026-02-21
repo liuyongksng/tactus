@@ -28,6 +28,8 @@ Tactus is the first product to implement the Agent Skills specification in a bro
 ### 🤖 Intelligent Conversation
 
 - **OpenAI Compatible API** - Supports any OpenAI-compatible API provider (including domestic model services)
+- **Dual API Modes** - Supports both `chat.completions` and `responses`, with per-provider mode selection (`auto` / `chat_completions` / `responses`)
+- **Responses Full-History Continuation** - Continues multi-turn conversations by rebuilding full input history (without depending on `previous_response_id`) for better compatibility with proxy gateways
 - **Multi-Model Switching** - Configure multiple providers and switch models anytime
 - **Streaming Response** - Real-time AI replies with chain-of-thought display
 - **ReAct Paradigm** - Built-in complete tool calling loop, AI autonomously decides when to use tools
@@ -46,6 +48,7 @@ Tactus is the first product to implement the Agent Skills specification in a bro
 
 - **Smart Extraction** - Uses Readability + Turndown to extract core page content and convert to Markdown
 - **Selection Quote** - Select text on page or in sidebar and quote it with one click
+- **Stable Shared-Page Follow-up** - In Responses mode, tool call history (`function_call`) and tool output (`function_call_output`) are paired and replayed correctly, avoiding second-turn failures
 - **Context Awareness** - AI determines whether to call page extraction tool; skips if skill script provides content
 - **Raw Extraction Mode** - Configure specific websites to skip Readability algorithm and extract raw page content directly
 
@@ -85,7 +88,7 @@ https://github.com/user-attachments/assets/c7737e7e-dd2e-4888-a030-db40b9731f1d
 
 - **Web Content Char Limit** - Configure maximum characters for extracted page content to control token usage
 - **Tool Call Limit** - Configure maximum tool calls per conversation to prevent infinite loops
-- **Smart Base URL Handling** - Auto-complete `/v1/chat/completions` path to simplify API configuration
+- **Smart Base URL Handling** - If Base URL does not end with `/`, auto-complete `/v1` to support both `chat.completions` and `responses`
 
 ## 🚀 Quick Start
 

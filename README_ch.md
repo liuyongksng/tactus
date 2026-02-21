@@ -28,6 +28,8 @@ Tactus 是首个在浏览器扩展中实现 Agent Skills 规范的产品：
 ### 🤖 智能对话
 
 - **OpenAI 兼容 API** - 支持任何 OpenAI 兼容的 API 服务商（包括国内各大模型服务）
+- **双 API 模式** - 同时支持 `chat.completions` 与 `responses`，可按服务商选择 `auto` / `chat_completions` / `responses`
+- **Responses 全历史续聊** - 通过每轮重建完整 `input` 继续多轮对话（不依赖 `previous_response_id`），兼容更多中转网关
 - **多模型切换** - 配置多个服务商，随时切换模型
 - **流式响应** - 实时显示 AI 回复，支持思维链展示
 - **ReAct 范式** - 内置完整工具调用循环，AI 自主决策何时使用工具
@@ -46,6 +48,7 @@ Tactus 是首个在浏览器扩展中实现 Agent Skills 规范的产品：
 
 - **智能提取** - 使用 Readability + Turndown 提取页面核心内容并转换为 Markdown
 - **选中引用** - 选中页面文字或侧边栏文字后一键引用提问
+- **页面共享二轮稳定性** - 在 Responses 模式下，`function_call` 与 `function_call_output` 会正确配对回放，避免第二轮对话失败
 - **上下文感知** - AI 自行判断是否调用网页提取工具，如果 skill 脚本有提供则不会重复提取
 - **原始提取模式** - 支持配置特定网站跳过 Readability 算法，直接提取页面原始内容
 
@@ -85,7 +88,7 @@ https://github.com/user-attachments/assets/c7737e7e-dd2e-4888-a030-db40b9731f1d
 
 - **网页内容字数限制** - 可配置提取页面内容的最大字数，控制 token 消耗
 - **工具调用次数限制** - 可配置 Agent 单次对话中工具调用的最大次数，防止无限循环
-- **Base URL 智能处理** - 自动补全 `/v1/chat/completions` 路径，简化 API 配置
+- **Base URL 智能处理** - 当 Base URL 不以 `/` 结尾时自动补全 `/v1`，同时适配 `chat.completions` 与 `responses`
 
 ## 🚀 快速开始
 
