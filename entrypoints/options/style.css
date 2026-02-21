@@ -1256,6 +1256,72 @@ body {
   font-weight: 500;
 }
 
+.font-preset-selector {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.font-preset-btn {
+  min-height: 36px;
+  border: 1px solid var(--border);
+  background: var(--muted);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: var(--font-body);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: all 200ms ease-out;
+  padding: 0 10px;
+}
+
+.font-preset-btn:hover:not(.active) {
+  border-color: var(--accent);
+  color: var(--foreground);
+  background: var(--card);
+}
+
+.font-preset-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(184, 134, 11, 0.1);
+  box-shadow: var(--shadow-sm);
+}
+
+.font-custom-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.font-custom-row .site-input {
+  margin-bottom: 0;
+}
+
+.font-preview-box {
+  border: 1px dashed var(--border);
+  background: var(--muted);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.font-preview-label {
+  display: block;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--muted-foreground);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.font-preview-text {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--foreground);
+}
+
 /* 响应式设置 */
 @media (max-width: 640px) {
   .settings-item {
@@ -1276,6 +1342,14 @@ body {
   .lang-btn {
     flex: 1;
     text-align: center;
+  }
+
+  .font-preset-selector {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .font-custom-row {
+    flex-direction: column;
   }
 }
 

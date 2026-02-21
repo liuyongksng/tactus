@@ -103,6 +103,16 @@ export interface Translations {
   generalSettingsDesc: string;
   language: string;
   languageDesc: string;
+  fontSettings: string;
+  fontSettingsDesc: string;
+  fontPresetSystem: string;
+  fontPresetSerif: string;
+  fontPresetMonospace: string;
+  fontPresetCustom: string;
+  fontCustomPlaceholder: string;
+  fontSettingsHint: string;
+  fontPreviewLabel: string;
+  fontPreviewText: string;
   floatingBall: string;
   floatingBallDesc: string;
   floatingBallEnabled: string;
@@ -309,6 +319,16 @@ const en: Translations = {
   generalSettingsDesc: 'Configure extension options',
   language: 'Language',
   languageDesc: 'Select the language for interface and AI responses',
+  fontSettings: 'Font Settings',
+  fontSettingsDesc: 'Choose the UI font style for options and sidepanel',
+  fontPresetSystem: 'System',
+  fontPresetSerif: 'Serif',
+  fontPresetMonospace: 'Monospace',
+  fontPresetCustom: 'Custom',
+  fontCustomPlaceholder: 'Example: "Inter", "PingFang SC", sans-serif',
+  fontSettingsHint: 'Custom mode supports a full CSS font-family stack; empty value falls back to system.',
+  fontPreviewLabel: 'Preview',
+  fontPreviewText: 'The quick brown fox jumps over the lazy dog. 你好，欢迎使用 Tactus。',
   floatingBall: 'Floating Ball',
   floatingBallDesc: 'Show floating ball on the right side of pages for quick access',
   floatingBallEnabled: 'Enabled',
@@ -515,6 +535,16 @@ const zhCN: Translations = {
   generalSettingsDesc: '配置扩展的通用选项',
   language: '语言 / Language',
   languageDesc: '选择界面和 AI 回复的语言',
+  fontSettings: '字体设置',
+  fontSettingsDesc: '设置 options 与 sidepanel 的界面字体风格',
+  fontPresetSystem: '系统',
+  fontPresetSerif: '衬线',
+  fontPresetMonospace: '等宽',
+  fontPresetCustom: '自定义',
+  fontCustomPlaceholder: '例如: "Inter", "PingFang SC", sans-serif',
+  fontSettingsHint: '自定义模式支持完整 CSS 字体栈；留空会自动回退系统字体。',
+  fontPreviewLabel: '预览',
+  fontPreviewText: '你好，欢迎使用 Tactus。这是一段字体预览文本。',
   floatingBall: '悬浮球',
   floatingBallDesc: '在页面右侧显示悬浮球，方便快速访问',
   floatingBallEnabled: '已启用',

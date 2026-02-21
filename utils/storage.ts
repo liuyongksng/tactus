@@ -92,6 +92,84 @@ export function applyTheme(mode: ThemeMode): void {
   document.documentElement.setAttribute('data-theme', theme);
 }
 
+// ==================== Font Settings ====================
+
+export type FontFamilyPreset = 'system' | 'serif' | 'monospace' | 'custom';
+
+export interface FontSettings {
+  preset: FontFamilyPreset;
+  customFamily: string;
+}
+
+export const DEFAULT_FONT_SETTINGS: FontSettings = {
+  preset: 'system',
+  customFamily: '',
+};
+
+const DEFAULT_FONT_MONO_FAMILY = '"IBM Plex Mono", "SFMono-Regular", Consolas, monospace';
+
+const FONT_PRESET_FAMILIES: Record<Exclude<FontFamilyPreset, 'custom'>, string> = {
+  system: '"Source Sans 3", system-ui, sans-serif',
+  serif: '"Playfair Display", Georgia, "Times New Roman", serif',
+  monospace: DEFAULT_FONT_MONO_FAMILY,
+};
+
+const fontSettingsStorage = storage.defineItem<FontSettings>('local:fontSettings', {
+  fallback: DEFAULT_FONT_SETTINGS,
+});
+
+function normalizeFontPreset(value: unknown): FontFamilyPreset {
+  if (value === 'serif' || value === 'monospace' || value === 'custom') {
+    return value;
+  }
+  return 'system';
+}
+
+function normalizeFontSettings(value: unknown): FontSettings {
+  const rawValue = (value ?? {}) as Partial<FontSettings>;
+  return {
+    preset: normalizeFontPreset(rawValue.preset),
+    customFamily: typeof rawValue.customFamily === 'string' ? rawValue.customFamily.trim() : '',
+  };
+}
+
+export function resolveFontFamily(settings?: FontSettings | null): string {
+  const normalized = normalizeFontSettings(settings ?? DEFAULT_FONT_SETTINGS);
+  if (normalized.preset === 'custom') {
+    return normalized.customFamily || FONT_PRESET_FAMILIES.system;
+  }
+  return FONT_PRESET_FAMILIES[normalized.preset];
+}
+
+export async function getFontSettings(): Promise<FontSettings> {
+  const value = await fontSettingsStorage.getValue();
+  return normalizeFontSettings(value);
+}
+
+export async function setFontSettings(settings: FontSettings): Promise<void> {
+  await fontSettingsStorage.setValue(normalizeFontSettings(settings));
+}
+
+export function watchFontSettings(callback: (settings: FontSettings) => void): () => void {
+  return fontSettingsStorage.watch((newValue) => {
+    callback(normalizeFontSettings(newValue));
+  });
+}
+
+export function applyFontSettings(settings: FontSettings, target?: HTMLElement | null): void {
+  const root = target ?? (typeof document !== 'undefined' ? document.documentElement : null);
+  if (!root) return;
+
+  const normalized = normalizeFontSettings(settings);
+  const family = resolveFontFamily(normalized);
+  const monoFamily =
+    normalized.preset === 'monospace' ? FONT_PRESET_FAMILIES.monospace : DEFAULT_FONT_MONO_FAMILY;
+
+  root.style.setProperty('--font-body', family);
+  root.style.setProperty('--font-display', family);
+  root.style.setProperty('--font-mono', monoFamily);
+}
+
 // ==================== Language Settings ====================
 
 export type Language = 'en' | 'zh-CN';

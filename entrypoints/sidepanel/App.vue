@@ -15,6 +15,9 @@ import {
   setThemeMode,
   watchThemeMode,
   applyTheme,
+  getFontSettings,
+  watchFontSettings,
+  applyFontSettings,
   getResolvedTheme,
   getSelectionQuoteEnabled,
   watchSelectionQuoteEnabled,
@@ -813,6 +816,7 @@ const unwatchProviders = ref<(() => void) | null>(null);
 const unwatchActiveProviderId = ref<(() => void) | null>(null);
 const unwatchLanguage = ref<(() => void) | null>(null);
 const unwatchThemeMode = ref<(() => void) | null>(null);
+const unwatchFontSettings = ref<(() => void) | null>(null);
 const unwatchSelectionQuoteEnabled = ref<(() => void) | null>(null);
 const unwatchMaxPageContentLength = ref<(() => void) | null>(null);
 const unwatchMaxToolCalls = ref<(() => void) | null>(null);
@@ -839,6 +843,7 @@ onMounted(async () => {
   // 加载主题设置
   currentThemeMode.value = await getThemeMode();
   applyTheme(currentThemeMode.value);
+  applyFontSettings(await getFontSettings());
   
   // 监听系统主题变化
   systemThemeMediaQuery.value = window.matchMedia('(prefers-color-scheme: dark)');
@@ -885,6 +890,11 @@ onMounted(async () => {
   unwatchThemeMode.value = watchThemeMode((newMode) => {
     currentThemeMode.value = newMode;
     applyTheme(newMode);
+  });
+
+  // 监听字体变化（跨页面同步）
+  unwatchFontSettings.value = watchFontSettings((newSettings) => {
+    applyFontSettings(newSettings);
   });
 
   // 监听划词引用设置变化
@@ -1020,6 +1030,7 @@ onUnmounted(() => {
   unwatchActiveProviderId.value?.();
   unwatchLanguage.value?.();
   unwatchThemeMode.value?.();
+  unwatchFontSettings.value?.();
   unwatchSelectionQuoteEnabled.value?.();
   unwatchMaxPageContentLength.value?.();
   unwatchMaxToolCalls.value?.();

@@ -24,11 +24,17 @@ import {
   getThemeMode,
   watchThemeMode,
   applyTheme,
+  getFontSettings,
+  setFontSettings,
+  watchFontSettings,
+  applyFontSettings,
   DEFAULT_SYSTEM_PROMPT_TEMPLATE,
   getReasoningEffortsForModel,
   getDefaultReasoningEffortForModel,
   type AIProvider,
   type ProviderApiMode,
+  type FontFamilyPreset,
+  type FontSettings,
   type TrustedScript,
   type Language,
 } from '../../utils/storage';
@@ -73,8 +79,13 @@ const maxToolCalls = ref(100);
 const rawExtractSites = ref<string[]>([]);
 const newRawExtractSite = ref('');
 
+// 字体设置
+const fontPreset = ref<FontFamilyPreset>('system');
+const customFontFamily = ref('');
+
 // 主题监听
 const unwatchThemeMode = ref<(() => void) | null>(null);
+const unwatchFontSettings = ref<(() => void) | null>(null);
 const systemThemeMediaQuery = ref<MediaQueryList | null>(null);
 
 // 国际化辅助函数
@@ -153,6 +164,11 @@ onMounted(async () => {
   maxToolCalls.value = await getMaxToolCalls();
   // 加载原始提取网站设置
   rawExtractSites.value = await getRawExtractSites();
+  // 加载字体设置
+  const initialFontSettings = await getFontSettings();
+  fontPreset.value = initialFontSettings.preset;
+  customFontFamily.value = initialFontSettings.customFamily;
+  applyFontSettings(initialFontSettings);
   
   // 加载并应用主题
   const themeMode = await getThemeMode();
@@ -165,6 +181,13 @@ onMounted(async () => {
   // 监听主题变化（跨页面同步）
   unwatchThemeMode.value = watchThemeMode((newMode) => {
     applyTheme(newMode);
+  });
+
+  // 监听字体变化（跨页面同步）
+  unwatchFontSettings.value = watchFontSettings((newSettings) => {
+    fontPreset.value = newSettings.preset;
+    customFontFamily.value = newSettings.customFamily;
+    applyFontSettings(newSettings);
   });
   
   // 加载 MCP Server 配置
@@ -186,6 +209,7 @@ async function handleSystemThemeChange() {
 
 onUnmounted(() => {
   unwatchThemeMode.value?.();
+  unwatchFontSettings.value?.();
   unwatchMcpServers.value?.();
   systemThemeMediaQuery.value?.removeEventListener('change', handleSystemThemeChange);
 });
@@ -428,6 +452,24 @@ async function handleMaxToolCallsChange() {
     : 100;
   maxToolCalls.value = normalized;
   await setMaxToolCalls(normalized);
+}
+
+async function persistFontSettings(): Promise<void> {
+  const settings: FontSettings = {
+    preset: fontPreset.value,
+    customFamily: customFontFamily.value,
+  };
+  await setFontSettings(settings);
+  applyFontSettings(settings);
+}
+
+async function handleFontPresetChange(preset: FontFamilyPreset): Promise<void> {
+  fontPreset.value = preset;
+  await persistFontSettings();
+}
+
+async function handleCustomFontFamilyChange(): Promise<void> {
+  await persistFontSettings();
 }
 
 // 原始提取网站管理
@@ -1024,6 +1066,69 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                 </div>
               </div>
               
+              <div class="settings-divider"></div>
+
+              <div class="settings-item settings-item-vertical">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M4 7h16M9 7l3 12M15 7l-3 12"/>
+                    </svg>
+                    <span>{{ i18n('fontSettings') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('fontSettingsDesc') }}</p>
+                </div>
+                <div class="settings-item-content">
+                  <div class="font-preset-selector">
+                    <button
+                      class="font-preset-btn"
+                      :class="{ active: fontPreset === 'system' }"
+                      @click="handleFontPresetChange('system')"
+                    >
+                      {{ i18n('fontPresetSystem') }}
+                    </button>
+                    <button
+                      class="font-preset-btn"
+                      :class="{ active: fontPreset === 'serif' }"
+                      @click="handleFontPresetChange('serif')"
+                    >
+                      {{ i18n('fontPresetSerif') }}
+                    </button>
+                    <button
+                      class="font-preset-btn"
+                      :class="{ active: fontPreset === 'monospace' }"
+                      @click="handleFontPresetChange('monospace')"
+                    >
+                      {{ i18n('fontPresetMonospace') }}
+                    </button>
+                    <button
+                      class="font-preset-btn"
+                      :class="{ active: fontPreset === 'custom' }"
+                      @click="handleFontPresetChange('custom')"
+                    >
+                      {{ i18n('fontPresetCustom') }}
+                    </button>
+                  </div>
+                  <div v-if="fontPreset === 'custom'" class="font-custom-row">
+                    <input
+                      v-model="customFontFamily"
+                      class="site-input"
+                      :placeholder="i18n('fontCustomPlaceholder')"
+                      @keydown.enter.prevent="handleCustomFontFamilyChange"
+                      @change="handleCustomFontFamilyChange"
+                    />
+                    <button class="btn btn-primary btn-sm" @click="handleCustomFontFamilyChange">
+                      {{ i18n('save') }}
+                    </button>
+                  </div>
+                  <p class="settings-hint">{{ i18n('fontSettingsHint') }}</p>
+                  <div class="font-preview-box">
+                    <span class="font-preview-label">{{ i18n('fontPreviewLabel') }}</span>
+                    <p class="font-preview-text">{{ i18n('fontPreviewText') }}</p>
+                  </div>
+                </div>
+              </div>
+
               <div class="settings-divider"></div>
               
               <div class="settings-item">
