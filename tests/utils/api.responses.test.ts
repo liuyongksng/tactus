@@ -7,7 +7,10 @@ import {
   buildSystemMessage,
   buildResponsesInput,
   buildSessionHeaders,
+  getLastApiMessages,
   parseResponsesStreamEvent,
+  rollbackToolIterationMessages,
+  setLastApiMessages,
   type ApiMessage,
 } from '../../utils/api';
 import { DEFAULT_SYSTEM_PROMPT_TEMPLATE, type AIProvider } from '../../utils/storage';
@@ -101,6 +104,68 @@ describe('buildResponsesInput', () => {
         content: 'hello',
       },
     ]);
+  });
+});
+
+describe('lastApiMessages 会话隔离', () => {
+  it('应按 sessionKey 分别读写上下文，互不污染', () => {
+    const sessionA = 'session-a';
+    const sessionB = 'session-b';
+    const messagesA: ApiMessage[] = [{ role: 'system', content: 'A' }];
+    const messagesB: ApiMessage[] = [{ role: 'system', content: 'B' }];
+
+    setLastApiMessages([], sessionA);
+    setLastApiMessages([], sessionB);
+    setLastApiMessages(messagesA, sessionA);
+    setLastApiMessages(messagesB, sessionB);
+
+    expect(getLastApiMessages(sessionA)).toEqual(messagesA);
+    expect(getLastApiMessages(sessionB)).toEqual(messagesB);
+  });
+
+  it('应兼容未传 sessionKey 的默认上下文', () => {
+    const defaultMessages: ApiMessage[] = [{ role: 'system', content: 'default' }];
+
+    setLastApiMessages(defaultMessages);
+
+    expect(getLastApiMessages()).toEqual(defaultMessages);
+  });
+});
+
+describe('rollbackToolIterationMessages', () => {
+  it('应在工具执行失败时回滚整轮 assistant/tool 增量消息', () => {
+    const baseMessages: ApiMessage[] = [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'user-1' },
+    ];
+    const withPartialToolRound: ApiMessage[] = [
+      ...baseMessages,
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'call-1',
+            type: 'function',
+            function: { name: 'extract_page_content', arguments: '{}' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: '{"ok":true}',
+        tool_call_id: 'call-1',
+      },
+    ];
+
+    expect(
+      rollbackToolIterationMessages(withPartialToolRound, baseMessages.length),
+    ).toEqual(baseMessages);
+  });
+
+  it('应在回滚索引越界时保持当前消息不变', () => {
+    const messages: ApiMessage[] = [{ role: 'system', content: 'system' }];
+    expect(rollbackToolIterationMessages(messages, 99)).toEqual(messages);
   });
 });
 

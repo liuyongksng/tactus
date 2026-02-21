@@ -46,6 +46,7 @@ import {
   createSession,
   updateSession,
   deleteSession,
+  deleteAllSessions,
   generateSessionTitle,
   type ChatImage,
   type ChatMessage,
@@ -134,6 +135,17 @@ const showModelSelector = ref(false);
 // Debug state
 const showDebugModal = ref(false);
 const debugApiMessages = ref<ApiMessage[]>([]);
+
+function getLatestApiMessagesForSession(sessionId: string): ApiMessage[] {
+  const memoryApiMessages = getLastApiMessages(sessionId);
+  if (memoryApiMessages.length > 0) {
+    return memoryApiMessages;
+  }
+  if (currentSession.value?.id === sessionId && currentSession.value.apiMessages?.length) {
+    return currentSession.value.apiMessages;
+  }
+  return [];
+}
 
 // 思维链折叠状态（按消息索引存储）
 const reasoningExpanded = ref<Record<number, boolean>>({});
@@ -258,11 +270,12 @@ async function saveEditMessage(): Promise<void> {
     cancelEditMessage();
     return;
   }
+  const sessionId = currentSession.value.id;
   
   const index = editingMessageIndex.value;
   
   // 获取当前的 API 上下文
-  const currentApiMessages = currentSession.value.apiMessages || getLastApiMessages();
+  const currentApiMessages = getLatestApiMessagesForSession(sessionId);
   
   // 计算被编辑的是第几条 user 消息（从 0 开始计数）
   // messages 数组中包含 user 和 assistant，需要计算 index 位置是第几个 user
@@ -301,7 +314,7 @@ async function saveEditMessage(): Promise<void> {
   messages.value = messages.value.slice(0, index + 1);
   
   // 更新 API 上下文为截取后的版本
-  setLastApiMessages(truncatedApiMessages);
+  setLastApiMessages(truncatedApiMessages, sessionId);
   
   // 同时更新会话中保存的 apiMessages
   if (currentSession.value) {
@@ -318,6 +331,7 @@ async function saveEditMessage(): Promise<void> {
 // 重新生成 AI 回复
 async function regenerateResponse(): Promise<void> {
   if (!currentSession.value) return;
+  const sessionId = currentSession.value.id;
   
   const provider = await getActiveProvider();
   if (!provider) {
@@ -378,7 +392,7 @@ async function regenerateResponse(): Promise<void> {
     const currentLanguage = await getLanguage();
     
     // 获取之前保存的 API 上下文（已在 saveEditMessage 中正确截取）
-    const previousApiMessages = currentSession.value?.apiMessages || getLastApiMessages();
+    const previousApiMessages = getLatestApiMessagesForSession(sessionId);
     // 只有当之前有消息时才传入（排除只有 system 消息的情况）
     const hasValidPreviousContext = previousApiMessages.length > 1;
     
@@ -392,7 +406,7 @@ async function regenerateResponse(): Promise<void> {
         mcpTools: mcpTools.value,
         pageInfo,
         language: currentLanguage,
-        sessionKey: currentSession.value?.id,
+        sessionKey: sessionId,
       },
       reactConfig,
       undefined, // retryConfig 使用默认值
@@ -1293,12 +1307,15 @@ ${skill.references.length > 0
 // Save current session
 async function saveCurrentSession() {
   if (!currentSession.value) return;
+  const sessionId = currentSession.value.id;
+  const latestApiMessages = getLatestApiMessagesForSession(sessionId);
   const sessionToSave: ChatSession = {
     ...currentSession.value,
     messages: JSON.parse(JSON.stringify(messages.value)),
-    apiMessages: JSON.parse(JSON.stringify(getLastApiMessages())), // 持久化 API 上下文
+    apiMessages: JSON.parse(JSON.stringify(latestApiMessages)), // 持久化 API 上下文
   };
   await updateSession(sessionToSave);
+  currentSession.value.apiMessages = sessionToSave.apiMessages;
   // 刷新当前已加载的会话列表
   await loadInitialSessions();
 }
@@ -1371,6 +1388,7 @@ async function sendMessage() {
     currentSession.value = await createSession(activeProviderId.value || undefined);
     await loadInitialSessions();
   }
+  const sessionId = currentSession.value.id;
 
   const messageImages = pendingImages.value.map(image => ({ ...image }));
   const userMessage: ChatMessage = {
@@ -1440,7 +1458,7 @@ async function sendMessage() {
     const currentLanguage = await getLanguage();
 
     // 获取之前保存的 API 上下文（包含完整的工具调用历史）
-    const previousApiMessages = currentSession.value?.apiMessages || getLastApiMessages();
+    const previousApiMessages = getLatestApiMessagesForSession(sessionId);
     // 只有当之前有消息时才传入（排除只有 system 消息的情况）
     const hasValidPreviousContext = previousApiMessages.length > 1;
 
@@ -1454,7 +1472,7 @@ async function sendMessage() {
         mcpTools: mcpTools.value,
         pageInfo,
         language: currentLanguage,
-        sessionKey: currentSession.value?.id,
+        sessionKey: sessionId,
       }, 
       reactConfig,
       undefined, // retryConfig 使用默认值
@@ -1560,9 +1578,12 @@ watch(inputText, () => {
 
 // New chat
 async function newChat() {
+  const previousSessionId = currentSession.value?.id;
   currentSession.value = null;
   messages.value = [];
-  setLastApiMessages([]); // 清空 API 上下文
+  if (previousSessionId) {
+    setLastApiMessages([], previousSessionId); // 清空当前会话的 API 上下文
+  }
   pendingImages.value = [];
   isImageDragActive.value = false;
   showHistory.value = false;
@@ -1580,9 +1601,9 @@ async function loadSession(session: ChatSession) {
   messages.value = session.messages;
   // 恢复 API 上下文
   if (session.apiMessages) {
-    setLastApiMessages(session.apiMessages);
+    setLastApiMessages(session.apiMessages, session.id);
   } else {
-    setLastApiMessages([]);
+    setLastApiMessages([], session.id);
   }
   await setCurrentSessionId(session.id);
   showHistory.value = false;
@@ -1594,6 +1615,7 @@ async function removeSession(id: string, e: Event) {
   e.stopPropagation();
   if (confirm(i18n('confirmDeleteChat'))) {
     await deleteSession(id);
+    setLastApiMessages([], id);
     sessions.value = await getAllSessions();
     if (currentSession.value?.id === id) {
       if (sessions.value.length > 0) {
@@ -1604,6 +1626,24 @@ async function removeSession(id: string, e: Event) {
       }
     }
   }
+}
+
+async function removeAllSessions() {
+  if (sessions.value.length === 0) return;
+  if (!confirm(i18n('confirmDeleteAllChats'))) return;
+  const previousSessionId = currentSession.value?.id;
+
+  await deleteAllSessions();
+  await loadInitialSessions();
+
+  currentSession.value = null;
+  messages.value = [];
+  if (previousSessionId) {
+    setLastApiMessages([], previousSessionId);
+  }
+  pendingImages.value = [];
+  pendingQuote.value = null;
+  isImageDragActive.value = false;
 }
 
 // Open settings page
@@ -1713,7 +1753,8 @@ let debugRefreshTimer: ReturnType<typeof setInterval> | null = null;
 function viewDebugMessages() {
   // 始终从内存获取最新的 API 上下文（lastApiMessages 是实时更新的）
   // 只有当内存中没有数据时，才从会话中获取持久化的数据
-  const memoryApiMessages = getLastApiMessages();
+  const sessionId = currentSession.value?.id;
+  const memoryApiMessages = sessionId ? getLastApiMessages(sessionId) : [];
   if (memoryApiMessages.length > 0) {
     debugApiMessages.value = memoryApiMessages;
   } else if (currentSession.value?.apiMessages?.length) {
@@ -1728,8 +1769,10 @@ function viewDebugMessages() {
     clearInterval(debugRefreshTimer);
   }
   debugRefreshTimer = setInterval(() => {
+    const currentId = currentSession.value?.id;
+    if (!currentId) return;
     // 始终从内存获取最新数据
-    const latestApiMessages = getLastApiMessages();
+    const latestApiMessages = getLastApiMessages(currentId);
     if (latestApiMessages.length > 0) {
       debugApiMessages.value = latestApiMessages;
     }
@@ -2183,7 +2226,16 @@ function rejectScript() {
       <div class="modal">
         <div class="modal-header">
           <h2>{{ i18n('history') }}</h2>
-          <button class="close-btn" @click="showHistory = false">×</button>
+          <div class="history-modal-actions">
+            <button
+              class="clear-all-sessions-btn"
+              :disabled="sessions.length === 0"
+              @click="removeAllSessions"
+            >
+              {{ i18n('deleteAllChats') }}
+            </button>
+            <button class="close-btn" @click="showHistory = false">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div v-if="sessions.length === 0" class="empty-history">

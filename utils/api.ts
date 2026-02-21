@@ -203,15 +203,36 @@ export interface ApiMessage {
   name?: string;
 }
 
-// 存储最后一次发送给模型的完整上下文，用于调试
-let lastApiMessages: ApiMessage[] = [];
+// 存储最后一次发送给模型的完整上下文（按会话隔离），用于调试
+const DEFAULT_API_CONTEXT_KEY = '__default__';
+const lastApiMessagesBySession = new Map<string, ApiMessage[]>();
 
-export function getLastApiMessages(): ApiMessage[] {
-  return lastApiMessages;
+function resolveApiContextKey(sessionKey?: string): string {
+  if (typeof sessionKey !== 'string') return DEFAULT_API_CONTEXT_KEY;
+  const normalized = sessionKey.trim();
+  return normalized || DEFAULT_API_CONTEXT_KEY;
 }
 
-export function setLastApiMessages(messages: ApiMessage[]) {
-  lastApiMessages = messages;
+export function getLastApiMessages(sessionKey?: string): ApiMessage[] {
+  const key = resolveApiContextKey(sessionKey);
+  const messages = lastApiMessagesBySession.get(key) || [];
+  return [...messages];
+}
+
+export function setLastApiMessages(messages: ApiMessage[], sessionKey?: string) {
+  const key = resolveApiContextKey(sessionKey);
+  lastApiMessagesBySession.set(key, [...messages]);
+}
+
+export function rollbackToolIterationMessages(messages: ApiMessage[], rollbackIndex: number): ApiMessage[] {
+  if (!Array.isArray(messages) || messages.length === 0) return [];
+  if (!Number.isFinite(rollbackIndex)) return [...messages];
+
+  const normalizedIndex = Math.max(0, Math.floor(rollbackIndex));
+  if (normalizedIndex >= messages.length) {
+    return [...messages];
+  }
+  return messages.slice(0, normalizedIndex);
 }
 
 // 解析 Base URL：
@@ -771,6 +792,7 @@ async function* streamChatWithChatCompletions(
   const maxIterations = config?.maxIterations || 5;
   const maxToolCalls = Math.max(1, config?.maxToolCalls || 100);
   const allowImages = isVisionSupportedForModel(provider, provider.selectedModel);
+  const apiContextSessionKey = context?.sessionKey;
   const sessionHeaders = buildSessionHeaders(context?.sessionKey);
   const abortSignal = config?.abortSignal;
   const ensureNotAborted = () => {
@@ -813,7 +835,7 @@ async function* streamChatWithChatCompletions(
     ];
   }
 
-  lastApiMessages = [...apiMessages];
+  setLastApiMessages(apiMessages, apiContextSessionKey);
 
   // 获取过滤后的工具列表
   const tools = enableTools ? getFilteredTools(context) : [];
@@ -1071,7 +1093,8 @@ async function* streamChatWithChatCompletions(
           arguments: tc.arguments,
         },
       }));
-      
+      const toolIterationStartIndex = currentMessages.length;
+
       currentMessages.push({
         role: 'assistant',
         content: fullContent || null,
@@ -1080,7 +1103,7 @@ async function* streamChatWithChatCompletions(
       });
       
       // 实时更新 API 上下文（记录 assistant 的 tool_calls）
-      lastApiMessages = [...currentMessages];
+      setLastApiMessages(currentMessages, apiContextSessionKey);
       
       // 执行每个工具调用
       let hasExecutionError = false;
@@ -1149,29 +1172,33 @@ async function* streamChatWithChatCompletions(
         });
         
         // 实时更新 API 上下文（记录 tool result）
-        lastApiMessages = [...currentMessages];
+        setLastApiMessages(currentMessages, apiContextSessionKey);
       }
       
       // 如果有执行错误，剔除本次 assistant 消息，重试
       if (hasExecutionError) {
-        // 移除刚才添加的 assistant 消息
-        currentMessages.pop();
+        currentMessages = rollbackToolIterationMessages(currentMessages, toolIterationStartIndex);
+        setLastApiMessages(currentMessages, apiContextSessionKey);
         continue;
       }
+
+      // 本轮工具调用成功后，重置连续失败计数
+      toolCallRetryCount = 0;
       
       // 继续下一轮迭代
       continue;
     }
     
     // 没有工具调用，结束循环
-    lastApiMessages = [...currentMessages];
+    const finalMessages = [...currentMessages];
     if (fullContent || fullReasoning) {
-      lastApiMessages.push({ 
+      finalMessages.push({
         role: 'assistant', 
         content: fullContent || null,
         reasoning: fullReasoning || null,
       });
     }
+    setLastApiMessages(finalMessages, apiContextSessionKey);
     break;
   }
   
@@ -1191,6 +1218,7 @@ async function* streamChatWithResponses(
   const maxIterations = config?.maxIterations || 5;
   const maxToolCalls = Math.max(1, config?.maxToolCalls || 100);
   const allowImages = isVisionSupportedForModel(provider, provider.selectedModel);
+  const apiContextSessionKey = context?.sessionKey;
   const abortSignal = config?.abortSignal;
   const sessionHeaders = buildSessionHeaders(context?.sessionKey);
   const promptCacheKey = typeof context?.sessionKey === 'string' ? context.sessionKey.trim() : '';
@@ -1228,7 +1256,7 @@ async function* streamChatWithResponses(
     ];
   }
 
-  lastApiMessages = [...apiMessages];
+  setLastApiMessages(apiMessages, apiContextSessionKey);
 
   const tools = enableTools ? getFilteredTools(context) : [];
   const baseResponseTools = tools.length > 0 ? convertToolsToResponses(tools) : undefined;
@@ -1473,6 +1501,7 @@ async function* streamChatWithResponses(
           arguments: tc.arguments,
         },
       }));
+      const toolIterationStartIndex = currentMessages.length;
 
       currentMessages.push({
         role: 'assistant',
@@ -1480,7 +1509,7 @@ async function* streamChatWithResponses(
         reasoning: fullReasoning || null,
         tool_calls: assistantToolCalls,
       });
-      lastApiMessages = [...currentMessages];
+      setLastApiMessages(currentMessages, apiContextSessionKey);
 
       let hasExecutionError = false;
       for (const tc of toolCalls) {
@@ -1534,24 +1563,29 @@ async function* streamChatWithResponses(
           tool_call_id: tc.id,
           name: tc.name,
         });
-        lastApiMessages = [...currentMessages];
+        setLastApiMessages(currentMessages, apiContextSessionKey);
       }
 
       if (hasExecutionError) {
-        currentMessages.pop();
+        currentMessages = rollbackToolIterationMessages(currentMessages, toolIterationStartIndex);
+        setLastApiMessages(currentMessages, apiContextSessionKey);
         continue;
       }
+
+      // 本轮工具调用成功后，重置连续失败计数
+      toolCallRetryCount = 0;
       continue;
     }
 
-    lastApiMessages = [...currentMessages];
+    const finalMessages = [...currentMessages];
     if (fullContent || fullReasoning) {
-      lastApiMessages.push({
+      finalMessages.push({
         role: 'assistant',
         content: fullContent || null,
         reasoning: fullReasoning || null,
       });
     }
+    setLastApiMessages(finalMessages, apiContextSessionKey);
     break;
   }
 
@@ -1604,7 +1638,7 @@ export async function* streamChatSimple(
     })),
   ];
 
-  lastApiMessages = apiMessages;
+  setLastApiMessages(apiMessages);
 
   // 带重试的 API 调用
   let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;

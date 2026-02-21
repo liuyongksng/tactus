@@ -56,6 +56,18 @@ const trustedScriptsStorage = storage.defineItem<TrustedScript[]>('local:trusted
   fallback: [],
 });
 
+function createSerializedMutationQueue() {
+  let queueTail: Promise<void> = Promise.resolve();
+  return async (mutation: () => Promise<void>): Promise<void> => {
+    const run = queueTail.then(mutation, mutation);
+    queueTail = run.catch(() => undefined);
+    await run;
+  };
+}
+
+const runProvidersMutation = createSerializedMutationQueue();
+const runTrustedScriptsMutation = createSerializedMutationQueue();
+
 // ==================== Theme Settings ====================
 
 export type ThemeMode = 'light' | 'dark' | 'system';
@@ -368,20 +380,25 @@ export async function getProvider(id: string): Promise<AIProvider | undefined> {
 }
 
 export async function saveProvider(provider: AIProvider): Promise<void> {
-  const providers = (await providersStorage.getValue()).map(normalizeProvider);
-  const normalizedProvider = normalizeProvider(provider);
-  const index = providers.findIndex((p: AIProvider) => p.id === provider.id);
-  if (index >= 0) {
-    providers[index] = normalizedProvider;
-  } else {
-    providers.push(normalizedProvider);
-  }
-  await providersStorage.setValue(providers);
+  await runProvidersMutation(async () => {
+    const providers = (await providersStorage.getValue()).map(normalizeProvider);
+    const normalizedProvider = normalizeProvider(provider);
+    const index = providers.findIndex((p: AIProvider) => p.id === provider.id);
+    const nextProviders = [...providers];
+    if (index >= 0) {
+      nextProviders[index] = normalizedProvider;
+    } else {
+      nextProviders.push(normalizedProvider);
+    }
+    await providersStorage.setValue(nextProviders);
+  });
 }
 
 export async function deleteProvider(id: string): Promise<void> {
-  const providers = await providersStorage.getValue();
-  await providersStorage.setValue(providers.filter((p: AIProvider) => p.id !== id));
+  await runProvidersMutation(async () => {
+    const providers = (await providersStorage.getValue()).map(normalizeProvider);
+    await providersStorage.setValue(providers.filter((p: AIProvider) => p.id !== id));
+  });
 }
 
 export async function getActiveProvider(): Promise<AIProvider | null> {
@@ -552,18 +569,24 @@ export async function isScriptTrusted(skillId: string, scriptName: string): Prom
 }
 
 export async function trustScript(skillId: string, scriptName: string): Promise<void> {
-  const scripts = await trustedScriptsStorage.getValue();
-  if (!scripts.some((s: TrustedScript) => s.skillId === skillId && s.scriptName === scriptName)) {
-    scripts.push({ skillId, scriptName, trustedAt: Date.now() });
-    await trustedScriptsStorage.setValue(scripts);
-  }
+  await runTrustedScriptsMutation(async () => {
+    const scripts = await trustedScriptsStorage.getValue();
+    if (!scripts.some((s: TrustedScript) => s.skillId === skillId && s.scriptName === scriptName)) {
+      await trustedScriptsStorage.setValue([
+        ...scripts,
+        { skillId, scriptName, trustedAt: Date.now() },
+      ]);
+    }
+  });
 }
 
 export async function untrustScript(skillId: string, scriptName: string): Promise<void> {
-  const scripts = await trustedScriptsStorage.getValue();
-  await trustedScriptsStorage.setValue(
-    scripts.filter((s: TrustedScript) => !(s.skillId === skillId && s.scriptName === scriptName))
-  );
+  await runTrustedScriptsMutation(async () => {
+    const scripts = await trustedScriptsStorage.getValue();
+    await trustedScriptsStorage.setValue(
+      scripts.filter((s: TrustedScript) => !(s.skillId === skillId && s.scriptName === scriptName))
+    );
+  });
 }
 
 export async function getTrustedScripts(): Promise<TrustedScript[]> {
@@ -572,8 +595,10 @@ export async function getTrustedScripts(): Promise<TrustedScript[]> {
 
 // 删除某个 skill 的所有信任记录
 export async function removeTrustedScriptsBySkillId(skillId: string): Promise<void> {
-  const scripts = await trustedScriptsStorage.getValue();
-  await trustedScriptsStorage.setValue(scripts.filter((s: TrustedScript) => s.skillId !== skillId));
+  await runTrustedScriptsMutation(async () => {
+    const scripts = await trustedScriptsStorage.getValue();
+    await trustedScriptsStorage.setValue(scripts.filter((s: TrustedScript) => s.skillId !== skillId));
+  });
 }
 
 // ==================== 重新导出 IndexedDB 的其他功能 ====================

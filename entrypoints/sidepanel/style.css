@@ -69,6 +69,10 @@
   color: #FC8181;
 }
 
+[data-theme="dark"] .clear-all-sessions-btn:hover:not(:disabled) {
+  background: rgba(252, 129, 129, 0.1);
+}
+
 [data-theme="dark"] .stop-btn {
   color: #FC8181;
   border-color: #FC8181;
@@ -900,6 +904,34 @@ body {
   font-size: 18px;
   font-weight: 600;
   color: var(--foreground);
+}
+
+.history-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.clear-all-sessions-btn {
+  border: 1px solid #C53030;
+  background: transparent;
+  color: #C53030;
+  min-height: 30px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 180ms ease-out;
+}
+
+.clear-all-sessions-btn:hover:not(:disabled) {
+  background: #FFF5F5;
+}
+
+.clear-all-sessions-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .close-btn {

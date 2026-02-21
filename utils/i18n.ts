@@ -199,7 +199,9 @@ export interface Translations {
   confirmDeleteProvider: string;
   confirmDeleteSkill: string;
   confirmDeleteChat: string;
+  confirmDeleteAllChats: string;
   confirmUntrustScript: string;
+  deleteAllChats: string;
   
   // 错误提示
   fillRequired: string;
@@ -415,7 +417,9 @@ const en: Translations = {
   confirmDeleteProvider: 'Are you sure you want to delete this provider?',
   confirmDeleteSkill: 'Are you sure you want to delete this skill?',
   confirmDeleteChat: 'Are you sure you want to delete this conversation?',
+  confirmDeleteAllChats: 'Are you sure you want to delete all conversations? This action cannot be undone.',
   confirmUntrustScript: 'Are you sure you want to untrust script "{name}"?',
+  deleteAllChats: 'Delete all chats',
   
   // 错误提示
   fillRequired: 'Please fill in provider name, Base URL and API Key',
@@ -631,7 +635,9 @@ const zhCN: Translations = {
   confirmDeleteProvider: '确定删除这个服务商吗？',
   confirmDeleteSkill: '确定删除这个 Skill 吗？',
   confirmDeleteChat: '确定删除这个对话吗？',
+  confirmDeleteAllChats: '确定删除全部对话吗？此操作不可恢复。',
   confirmUntrustScript: '确定取消信任脚本 "{name}" 吗？',
+  deleteAllChats: '删除全部对话',
   
   // 错误提示
   fillRequired: '请填写服务商名称、Base URL 和 API Key',

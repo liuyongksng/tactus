@@ -319,6 +319,12 @@ export async function deleteSession(id: string): Promise<void> {
   }
 }
 
+export async function deleteAllSessions(): Promise<void> {
+  const db = await getDB();
+  await db.clear('chatSessions');
+  await setCurrentSessionId(null);
+}
+
 export async function generateSessionTitle(firstMessage: string): Promise<string> {
   const maxLen = 20;
   const title = firstMessage.replace(/\n/g, ' ').trim();
@@ -350,6 +356,9 @@ export async function saveSkill(skill: Skill): Promise<void> {
 }
 
 export async function deleteSkill(id: string): Promise<void> {
+  // 先删除 WXT storage 中的信任记录，避免该步骤失败后留下脏数据
+  await removeTrustedScriptsBySkillId(id);
+
   const db = await getDB();
   
   // 删除关联的文件
@@ -367,9 +376,6 @@ export async function deleteSkill(id: string): Promise<void> {
   await tx.objectStore('skills').delete(id);
   
   await tx.done;
-  
-  // 删除信任记录（从 WXT storage）
-  await removeTrustedScriptsBySkillId(id);
 }
 
 // ==================== Skill Files ====================
