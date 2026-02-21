@@ -29,6 +29,7 @@ Tactus is the first product to implement the Agent Skills specification in a bro
 
 - **OpenAI Compatible API** - Supports any OpenAI-compatible API provider (including domestic model services)
 - **Dual API Modes** - Supports both `chat.completions` and `responses`, with per-provider mode selection (`auto` / `chat_completions` / `responses`)
+- **Responses Reasoning Controls** - In `responses` mode, an Effort selector appears next to the model picker, with model-aware options (`none`/`minimal`/`low`/`medium`/`high`/`xhigh`) and fixed `reasoning.summary: "auto"`
 - **Responses Full-History Continuation** - Continues multi-turn conversations by rebuilding full input history (without depending on `previous_response_id`) for better compatibility with proxy gateways
 - **Multi-Model Switching** - Configure multiple providers and switch models anytime
 - **Streaming Response** - Real-time AI replies with chain-of-thought display
@@ -136,6 +137,7 @@ npm run build
 3. Add API provider (fill in name, API URL, key)
 4. Fetch model list and select a model
 5. Enable vision config in model settings if vision capability is needed
+6. If API mode is `responses`, adjust reasoning Effort from the dropdown on the right of the model selector (`chat_completions` / `auto` will not show this control)
 
 <!-- Configuration Demo  -->
 ![Configuration Demo](resources/set-llm.png)

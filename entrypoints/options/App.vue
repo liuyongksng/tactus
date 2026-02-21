@@ -24,6 +24,8 @@ import {
   getThemeMode,
   watchThemeMode,
   applyTheme,
+  getReasoningEffortsForModel,
+  getDefaultReasoningEffortForModel,
   type AIProvider,
   type ProviderApiMode,
   type TrustedScript,
@@ -274,6 +276,12 @@ async function saveCurrentProvider() {
     const existingProvider = providers.value.find(p => p.id === selectedProviderId.value);
     const selectedModel = existingProvider?.selectedModel && formModels.value.includes(existingProvider.selectedModel)
       ? existingProvider.selectedModel : formModels.value[0];
+    const modelEfforts = getReasoningEffortsForModel(selectedModel);
+    const previousEffort = existingProvider?.responsesReasoningEffort;
+    const responsesReasoningEffort =
+      previousEffort && modelEfforts.includes(previousEffort)
+        ? previousEffort
+        : getDefaultReasoningEffortForModel(selectedModel);
     const provider: AIProvider = {
       id: isNewProvider.value ? crypto.randomUUID() : selectedProviderId.value!,
       name: formName.value,
@@ -285,6 +293,8 @@ async function saveCurrentProvider() {
       visionModelSupport: Object.fromEntries(
         formModels.value.map(model => [model, Boolean(formVisionModelSupport.value[model])]),
       ),
+      responsesReasoningEffort,
+      responsesReasoningSummary: 'auto',
     };
     await saveProvider(provider);
     providers.value = await getAllProviders();

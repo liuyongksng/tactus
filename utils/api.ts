@@ -1,7 +1,13 @@
 import OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
 import type { ChatMessage } from './db';
-import { isVisionSupportedForModel, type AIProvider } from './storage';
+import {
+  getDefaultReasoningEffortForModel,
+  getReasoningEffortsForModel,
+  isVisionSupportedForModel,
+  type AIProvider,
+  type ResponsesReasoningEffort,
+} from './storage';
 import { 
   getFilteredTools, 
   generateContextPrompt, 
@@ -537,6 +543,35 @@ export function parseResponsesStreamEvent(event: unknown): ParsedResponsesStream
 
 function shouldUseResponsesMode(provider: AIProvider): boolean {
   return provider.apiMode !== 'chat_completions';
+}
+
+export interface ResponsesReasoningConfig {
+  effort: ResponsesReasoningEffort;
+  summary: 'auto';
+  downgradedFrom?: ResponsesReasoningEffort;
+}
+
+export function buildResponsesReasoning(provider: AIProvider): ResponsesReasoningConfig | undefined {
+  if (provider.apiMode !== 'responses') {
+    return undefined;
+  }
+
+  const supportedEfforts = getReasoningEffortsForModel(provider.selectedModel);
+  const fallbackEffort = getDefaultReasoningEffortForModel(provider.selectedModel);
+  const configuredEffort = provider.responsesReasoningEffort;
+
+  if (supportedEfforts.includes(configuredEffort)) {
+    return {
+      effort: configuredEffort,
+      summary: 'auto',
+    };
+  }
+
+  return {
+    effort: fallbackEffort,
+    summary: 'auto',
+    downgradedFrom: configuredEffort,
+  };
 }
 
 function shouldFallbackToChatCompletions(error: ApiError): boolean {
@@ -1136,6 +1171,8 @@ async function* streamChatWithResponses(
   let toolCallRetryCount = 0;
   const maxToolCallRetries = 3;
   let executedToolCallCount = 0;
+  const reasoningConfig = buildResponsesReasoning(provider);
+  let reasoningDowngradeNotified = false;
 
   while (iteration < maxIterations) {
     ensureNotAborted();
@@ -1161,6 +1198,19 @@ async function* streamChatWithResponses(
         }
         if (promptCacheKey) {
           requestBody.prompt_cache_key = promptCacheKey;
+        }
+        if (reasoningConfig) {
+          requestBody.reasoning = {
+            effort: reasoningConfig.effort,
+            summary: reasoningConfig.summary,
+          };
+          if (reasoningConfig.downgradedFrom && !reasoningDowngradeNotified) {
+            yield {
+              type: 'thinking',
+              message: `当前模型不支持 effort=${reasoningConfig.downgradedFrom}，已自动降级为 ${reasoningConfig.effort}`,
+            };
+            reasoningDowngradeNotified = true;
+          }
         }
 
         const requestOptions: Record<string, unknown> = {

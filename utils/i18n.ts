@@ -50,6 +50,13 @@ export interface Translations {
   modelVision: string;
   modelVisionEnabled: string;
   modelVisionDisabled: string;
+  reasoningEffort: string;
+  reasoningEffortNone: string;
+  reasoningEffortMinimal: string;
+  reasoningEffortLow: string;
+  reasoningEffortMedium: string;
+  reasoningEffortHigh: string;
+  reasoningEffortXhigh: string;
   saveConfig: string;
   saving: string;
   noProviders: string;
@@ -242,6 +249,13 @@ const en: Translations = {
   modelVision: 'Vision',
   modelVisionEnabled: 'Vision enabled',
   modelVisionDisabled: 'Text only',
+  reasoningEffort: 'Effort',
+  reasoningEffortNone: 'None',
+  reasoningEffortMinimal: 'Minimal',
+  reasoningEffortLow: 'Low',
+  reasoningEffortMedium: 'Medium',
+  reasoningEffortHigh: 'High',
+  reasoningEffortXhigh: 'X-High',
   saveConfig: 'Save Configuration',
   saving: 'Saving...',
   noProviders: 'No providers configured',
@@ -434,6 +448,13 @@ const zhCN: Translations = {
   modelVision: '视觉',
   modelVisionEnabled: '支持视觉',
   modelVisionDisabled: '仅文本',
+  reasoningEffort: '思考强度',
+  reasoningEffortNone: '无推理',
+  reasoningEffortMinimal: '极低',
+  reasoningEffortLow: '低',
+  reasoningEffortMedium: '中',
+  reasoningEffortHigh: '高',
+  reasoningEffortXhigh: '超高',
   saveConfig: '保存配置',
   saving: '保存中...',
   noProviders: '暂无服务商配置',

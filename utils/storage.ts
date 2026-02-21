@@ -17,9 +17,13 @@ export interface AIProvider {
   selectedModel: string;
   visionModelSupport: Record<string, boolean>;
   apiMode: ProviderApiMode;
+  responsesReasoningEffort: ResponsesReasoningEffort;
+  responsesReasoningSummary: ResponsesReasoningSummary;
 }
 
 export type ProviderApiMode = 'auto' | 'chat_completions' | 'responses';
+export type ResponsesReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+export type ResponsesReasoningSummary = 'auto';
 
 export interface TrustedScript {
   skillId: string;
@@ -307,6 +311,15 @@ type LegacyProvider = Partial<AIProvider> & {
   visionModelSupport?: Record<string, boolean> | undefined;
 };
 
+const ALL_REASONING_EFFORTS: ResponsesReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+
+const MODEL_REASONING_EFFORT_RULES: Array<{ pattern: RegExp; efforts: ResponsesReasoningEffort[] }> = [
+  { pattern: /^gpt-5-pro(?:$|[-_.])/i, efforts: ['high'] },
+  { pattern: /^gpt-5\.2-pro(?:$|[-_.])/i, efforts: ['medium', 'high', 'xhigh'] },
+  { pattern: /^gpt-5\.2(?:$|[-_.])/i, efforts: ['none', 'low', 'medium', 'high', 'xhigh'] },
+  { pattern: /^gpt-5\.1(?:$|[-_.])/i, efforts: ['none', 'low', 'medium', 'high'] },
+];
+
 function normalizeApiMode(value: unknown): ProviderApiMode {
   if (value === 'chat_completions' || value === 'responses') {
     return value;
@@ -324,6 +337,49 @@ function normalizeModelList(models: unknown): string[] {
         .filter(Boolean),
     ),
   );
+}
+
+function normalizeModelNameForReasoning(model: string | null | undefined): string {
+  if (typeof model !== 'string') return '';
+  return model.trim().toLowerCase();
+}
+
+export function getReasoningEffortsForModel(model?: string | null): ResponsesReasoningEffort[] {
+  const normalized = normalizeModelNameForReasoning(model);
+  if (!normalized) return [...ALL_REASONING_EFFORTS];
+
+  for (const rule of MODEL_REASONING_EFFORT_RULES) {
+    if (rule.pattern.test(normalized)) {
+      return [...rule.efforts];
+    }
+  }
+
+  return [...ALL_REASONING_EFFORTS];
+}
+
+export function getDefaultReasoningEffortForModel(model?: string | null): ResponsesReasoningEffort {
+  const efforts = getReasoningEffortsForModel(model);
+  if (efforts.includes('medium')) return 'medium';
+  if (efforts.includes('high')) return 'high';
+  return efforts[0];
+}
+
+function normalizeResponsesReasoningEffort(
+  value: unknown,
+  model?: string | null,
+): ResponsesReasoningEffort {
+  const supported = getReasoningEffortsForModel(model);
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase() as ResponsesReasoningEffort;
+    if (supported.includes(normalized)) {
+      return normalized;
+    }
+  }
+  return getDefaultReasoningEffortForModel(model);
+}
+
+function normalizeResponsesReasoningSummary(value: unknown): ResponsesReasoningSummary {
+  return value === 'auto' ? 'auto' : 'auto';
 }
 
 function normalizeVisionModelSupport(
@@ -353,6 +409,11 @@ function normalizeProvider(provider: AIProvider): AIProvider {
       : models[0] || '';
   const visionModelSupport = normalizeVisionModelSupport(models, legacyProvider);
   const apiMode = normalizeApiMode(legacyProvider.apiMode);
+  const responsesReasoningEffort = normalizeResponsesReasoningEffort(
+    legacyProvider.responsesReasoningEffort,
+    selectedModel,
+  );
+  const responsesReasoningSummary = normalizeResponsesReasoningSummary(legacyProvider.responsesReasoningSummary);
 
   return {
     id: provider.id,
@@ -363,6 +424,8 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     selectedModel,
     visionModelSupport,
     apiMode,
+    responsesReasoningEffort,
+    responsesReasoningSummary,
   };
 }
 

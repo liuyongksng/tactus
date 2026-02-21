@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildResponsesReasoning,
   buildResponsesInput,
   buildSessionHeaders,
   parseResponsesStreamEvent,
   type ApiMessage,
 } from '../../utils/api';
+import type { AIProvider } from '../../utils/storage';
 
 describe('buildResponsesInput', () => {
   it('应正确转换用户多模态消息、工具调用与工具输出', () => {
@@ -139,6 +141,55 @@ describe('parseResponsesStreamEvent', () => {
       callId: 'call_2',
       name: 'activate_skill',
       arguments: '{"skill_name":"fetch-linuxdo-post"}',
+    });
+  });
+});
+
+describe('buildResponsesReasoning', () => {
+  function createProvider(overrides: Partial<AIProvider> = {}): AIProvider {
+    return {
+      id: 'provider_1',
+      name: 'Test Provider',
+      baseUrl: 'https://example.com/v1',
+      apiKey: 'test-key',
+      models: ['gpt-5.2'],
+      selectedModel: 'gpt-5.2',
+      visionModelSupport: { 'gpt-5.2': false },
+      apiMode: 'responses',
+      responsesReasoningEffort: 'high',
+      responsesReasoningSummary: 'auto',
+      ...overrides,
+    };
+  }
+
+  it('应在 responses 模式生成 reasoning 参数', () => {
+    const provider = createProvider({
+      apiMode: 'responses',
+      selectedModel: 'gpt-5.2',
+      responsesReasoningEffort: 'xhigh',
+    });
+
+    expect(buildResponsesReasoning(provider)).toEqual({
+      effort: 'xhigh',
+      summary: 'auto',
+    });
+  });
+
+  it('应在非 responses 模式返回 undefined', () => {
+    const provider = createProvider({ apiMode: 'auto' });
+    expect(buildResponsesReasoning(provider)).toBeUndefined();
+  });
+
+  it('应在 effort 不兼容时自动降级并标记来源', () => {
+    const provider = createProvider({
+      selectedModel: 'gpt-5-pro',
+      responsesReasoningEffort: 'xhigh',
+    });
+
+    expect(buildResponsesReasoning(provider)).toEqual({
+      effort: 'high',
+      summary: 'auto',
+      downgradedFrom: 'xhigh',
     });
   });
 });

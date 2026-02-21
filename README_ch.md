@@ -29,6 +29,7 @@ Tactus 是首个在浏览器扩展中实现 Agent Skills 规范的产品：
 
 - **OpenAI 兼容 API** - 支持任何 OpenAI 兼容的 API 服务商（包括国内各大模型服务）
 - **双 API 模式** - 同时支持 `chat.completions` 与 `responses`，可按服务商选择 `auto` / `chat_completions` / `responses`
+- **Responses 推理控制** - 在 `responses` 模式下，模型选择器右侧会显示“思考强度”下拉；选项按模型能力自动收敛（`none`/`minimal`/`low`/`medium`/`high`/`xhigh`），并固定透传 `reasoning.summary: "auto"`
 - **Responses 全历史续聊** - 通过每轮重建完整 `input` 继续多轮对话（不依赖 `previous_response_id`），兼容更多中转网关
 - **多模型切换** - 配置多个服务商，随时切换模型
 - **流式响应** - 实时显示 AI 回复，支持思维链展示
@@ -136,6 +137,7 @@ npm run build
 3. 添加 API 服务商（填写名称、API 地址、密钥）
 4. 获取模型列表并选择模型
 5. 如需视觉能力，在模型设置中启用视觉配置
+6. 若 API 模式为 `responses`，可在模型选择器右侧下拉调整“思考强度”（`chat_completions` / `auto` 模式不会显示该控件）
 
 <!-- 配置演示 -->
 ![配置演示](resources/set-llm.png)

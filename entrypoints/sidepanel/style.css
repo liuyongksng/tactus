@@ -551,6 +551,35 @@ body {
   white-space: nowrap;
 }
 
+.effort-selector-wrapper {
+  position: relative;
+}
+
+.effort-selector {
+  min-height: 32px;
+  max-width: 110px;
+  padding: 6px 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--muted-foreground);
+  transition: all 200ms ease-out;
+}
+
+.effort-selector:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.effort-selector:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(184, 134, 11, 0.12);
+}
+
 .model-dropdown {
   position: fixed;
   bottom: 80px;

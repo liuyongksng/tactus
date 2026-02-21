@@ -25,7 +25,10 @@ import {
   getRawExtractSites,
   isRawExtractSite,
   isVisionSupportedForModel,
+  getReasoningEffortsForModel,
+  getDefaultReasoningEffortForModel,
   type AIProvider,
+  type ResponsesReasoningEffort,
   type Language,
   type ThemeMode,
 } from '../../utils/storage';
@@ -474,6 +477,21 @@ const activeModelName = computed(() => {
   const model = activeProvider.value.selectedModel;
   // return model.length > 12 ? model.substring(0, 12) + '...' : model;
   return model;
+});
+
+const isResponsesMode = computed(() => activeProvider.value?.apiMode === 'responses');
+
+const reasoningEffortOptions = computed(() => {
+  return getReasoningEffortsForModel(activeProvider.value?.selectedModel);
+});
+
+const selectedReasoningEffort = computed<ResponsesReasoningEffort>(() => {
+  if (!activeProvider.value) return getDefaultReasoningEffortForModel(undefined);
+  const current = activeProvider.value.responsesReasoningEffort;
+  if (reasoningEffortOptions.value.includes(current)) {
+    return current;
+  }
+  return getDefaultReasoningEffortForModel(activeProvider.value.selectedModel);
 });
 
 // 构建所有可选的模型列表（供应商+模型组合）
@@ -1587,11 +1605,16 @@ async function selectProviderModel(providerId: string, model: string) {
   // 只有当模型确实改变时才保存
   if (freshProvider.selectedModel !== model) {
     freshProvider.selectedModel = model;
+    const supportedEfforts = getReasoningEffortsForModel(model);
+    if (!supportedEfforts.includes(freshProvider.responsesReasoningEffort)) {
+      freshProvider.responsesReasoningEffort = getDefaultReasoningEffortForModel(model);
+    }
     await saveProviderToDB(freshProvider);
     // 更新本地状态
     const localProvider = providers.value.find((p: AIProvider) => p.id === providerId);
     if (localProvider) {
       localProvider.selectedModel = model;
+      localProvider.responsesReasoningEffort = freshProvider.responsesReasoningEffort;
     }
   }
   
@@ -1599,6 +1622,57 @@ async function selectProviderModel(providerId: string, model: string) {
   activeProviderId.value = providerId;
   await setActiveProviderId(providerId);
   showModelSelector.value = false;
+}
+
+function formatReasoningEffortLabel(effort: ResponsesReasoningEffort): string {
+  switch (effort) {
+    case 'none':
+      return i18n('reasoningEffortNone');
+    case 'minimal':
+      return i18n('reasoningEffortMinimal');
+    case 'low':
+      return i18n('reasoningEffortLow');
+    case 'medium':
+      return i18n('reasoningEffortMedium');
+    case 'high':
+      return i18n('reasoningEffortHigh');
+    case 'xhigh':
+      return i18n('reasoningEffortXhigh');
+    default:
+      return effort;
+  }
+}
+
+async function onReasoningEffortChange(event: Event): Promise<void> {
+  const target = event.target as HTMLSelectElement | null;
+  if (!target || !activeProvider.value || activeProvider.value.apiMode !== 'responses') {
+    return;
+  }
+  const effort = target.value as ResponsesReasoningEffort;
+  if (!reasoningEffortOptions.value.includes(effort)) {
+    return;
+  }
+
+  const freshProvider = await getProvider(activeProvider.value.id);
+  if (!freshProvider || freshProvider.apiMode !== 'responses') {
+    return;
+  }
+  if (
+    freshProvider.responsesReasoningEffort === effort &&
+    freshProvider.responsesReasoningSummary === 'auto'
+  ) {
+    return;
+  }
+
+  freshProvider.responsesReasoningEffort = effort;
+  freshProvider.responsesReasoningSummary = 'auto';
+  await saveProviderToDB(freshProvider);
+
+  const localProvider = providers.value.find((p: AIProvider) => p.id === freshProvider.id);
+  if (localProvider) {
+    localProvider.responsesReasoningEffort = effort;
+    localProvider.responsesReasoningSummary = 'auto';
+  }
 }
 
 // 调试面板实时刷新定时器
@@ -2032,6 +2106,18 @@ function rejectScript() {
             </div>
             <!-- Backdrop -->
             <div v-if="showModelSelector" class="model-backdrop" @click="showModelSelector = false"></div>
+          </div>
+          <div v-if="isResponsesMode" class="effort-selector-wrapper">
+            <select
+              class="effort-selector"
+              :value="selectedReasoningEffort"
+              :title="i18n('reasoningEffort')"
+              @change="onReasoningEffortChange"
+            >
+              <option v-for="effort in reasoningEffortOptions" :key="effort" :value="effort">
+                {{ formatReasoningEffortLabel(effort) }}
+              </option>
+            </select>
           </div>
           <button v-if="isLoading" class="stop-btn" @click="terminateCurrentGeneration">
             {{ i18n('stop') }}
