@@ -414,3 +414,13 @@ export async function getSharePageContent(): Promise<boolean> {
 export async function setSharePageContent(value: boolean): Promise<void> {
   await setSetting('sharePageContent', value);
 }
+
+// ==================== Web Search Setting ====================
+
+export async function getWebSearchEnabled(): Promise<boolean> {
+  return getSetting('webSearchEnabled', false);
+}
+
+export async function setWebSearchEnabled(value: boolean): Promise<void> {
+  await setSetting('webSearchEnabled', value);
+}

@@ -171,8 +171,18 @@ body {
 
 
 /* Current tab share chip */
+.chat-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
 .tab-share-row {
-  margin-bottom: 8px;
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
 }
 
 .current-tab-chip {
@@ -244,6 +254,55 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.network-toggle {
+  flex-shrink: 0;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 180ms ease-out;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.network-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.network-toggle.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(184, 134, 11, 0.12);
+  box-shadow: 0 0 0 1px rgba(184, 134, 11, 0.28);
+}
+
+.network-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.45;
+}
+
+.network-toggle.active .network-indicator {
+  opacity: 1;
+}
+
+.network-text {
+  font-weight: 600;
+}
+
+.network-state {
+  opacity: 0.85;
 }
 
 /* Chat area */
@@ -335,6 +394,68 @@ body {
   padding: 16px 20px;
   background: var(--card);
   border-top: 1px solid var(--border);
+}
+
+@media (max-width: 640px) {
+  .chat-toolbar {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  .tab-share-row {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .network-toggle {
+    align-self: auto;
+    flex: 0 0 auto;
+    min-height: 32px;
+    padding: 6px 9px;
+    gap: 4px;
+  }
+
+  .network-state {
+    display: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .chat-toolbar {
+    gap: 4px;
+  }
+
+  .current-tab-chip {
+    padding: 6px 8px;
+    gap: 6px;
+  }
+
+  .tab-title {
+    font-size: 12px;
+  }
+
+  .network-toggle {
+    min-height: 30px;
+    padding: 6px 7px;
+    border-radius: 7px;
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 360px) {
+  .network-toggle {
+    min-width: 30px;
+    min-height: 30px;
+    padding: 0;
+    justify-content: center;
+    gap: 0;
+  }
+
+  .network-text {
+    display: none;
+  }
 }
 
 .inline-selection-quote {

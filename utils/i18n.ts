@@ -166,6 +166,9 @@ export interface Translations {
   sharePageContent: string;
   pageContentShared: string;
   currentTab: string;
+  webSearch: string;
+  webSearchOn: string;
+  webSearchOff: string;
   welcomeMessage: string;
   inputPlaceholder: string;
   thinking: string;
@@ -369,6 +372,9 @@ const en: Translations = {
   sharePageContent: 'Share page content',
   pageContentShared: 'Page content will be shared with AI',
   currentTab: 'Current tab',
+  webSearch: 'Web search',
+  webSearchOn: 'On',
+  webSearchOff: 'Off',
   welcomeMessage: 'Welcome! How can I help you?',
   inputPlaceholder: 'Type your message...',
   thinking: 'Thinking...',
@@ -572,6 +578,9 @@ const zhCN: Translations = {
   sharePageContent: '分享当前页面内容',
   pageContentShared: '页面内容将与 AI 共享',
   currentTab: '当前标签页',
+  webSearch: '联网',
+  webSearchOn: '已开',
+  webSearchOff: '已关',
   welcomeMessage: '欢迎使用，有什么可以帮您？',
   inputPlaceholder: '输入您的消息...',
   thinking: '思考中...',

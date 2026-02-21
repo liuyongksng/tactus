@@ -268,6 +268,7 @@ export interface FunctionCallingConfig {
 
 export interface StreamChatContext {
   sharePageContent?: boolean;
+  webSearchEnabled?: boolean;
   skills?: SkillInfo[];
   mcpTools?: McpTool[];
   pageInfo?: { domain: string; title: string; url?: string };
@@ -370,6 +371,28 @@ function convertToolsToResponses(tools: FunctionTool[]): Array<Record<string, un
     description: t.function.description,
     parameters: t.function.parameters,
   }));
+}
+
+export function buildResponsesTools(
+  provider: Pick<AIProvider, 'apiMode'>,
+  baseTools?: Array<Record<string, unknown>>,
+  context?: Pick<StreamChatContext, 'webSearchEnabled'>,
+  options?: { enableTools?: boolean },
+): Array<Record<string, unknown>> | undefined {
+  if (options?.enableTools === false) {
+    return undefined;
+  }
+
+  const tools = Array.isArray(baseTools) ? [...baseTools] : [];
+
+  if (provider.apiMode === 'responses' && context?.webSearchEnabled) {
+    tools.push({
+      type: 'web_search',
+      search_context_size: 'medium',
+    });
+  }
+
+  return tools.length > 0 ? tools : undefined;
 }
 
 function convertMessageContentToResponsesInput(content: ApiMessageContent): string | Array<Record<string, unknown>> {
@@ -489,6 +512,7 @@ export interface ParsedResponsesStreamEvent {
   responseId?: string;
   contentDelta?: string;
   reasoningDelta?: string;
+  webSearchStatus?: 'searching' | 'in_progress' | 'completed';
   toolCallArgumentDelta?: { callId: string; name?: string; delta?: string };
   toolCallDone?: { callId: string; name?: string; arguments?: string };
   toolCallItemDone?: { callId: string; name?: string; arguments?: string };
@@ -513,6 +537,18 @@ export function parseResponsesStreamEvent(event: unknown): ParsedResponsesStream
 
   if ((type.includes('reasoning') || type.includes('summary')) && typeof evt?.delta === 'string' && evt.delta.length > 0) {
     parsed.reasoningDelta = evt.delta;
+    return parsed;
+  }
+
+  if (
+    type === 'response.web_search_call.searching' ||
+    type === 'response.web_search_call.in_progress' ||
+    type === 'response.web_search_call.completed'
+  ) {
+    const status = type.replace('response.web_search_call.', '');
+    if (status === 'searching' || status === 'in_progress' || status === 'completed') {
+      parsed.webSearchStatus = status;
+    }
     return parsed;
   }
 
@@ -1195,7 +1231,8 @@ async function* streamChatWithResponses(
   lastApiMessages = [...apiMessages];
 
   const tools = enableTools ? getFilteredTools(context) : [];
-  const responseTools = tools.length > 0 ? convertToolsToResponses(tools) : undefined;
+  const baseResponseTools = tools.length > 0 ? convertToolsToResponses(tools) : undefined;
+  const responseTools = buildResponsesTools(provider, baseResponseTools, context, { enableTools });
   let iteration = 0;
   let currentMessages = [...apiMessages];
   let toolCallRetryCount = 0;
@@ -1314,6 +1351,18 @@ async function* streamChatWithResponses(
         if (parsedEvent.reasoningDelta) {
           fullReasoning += parsedEvent.reasoningDelta;
           yield { type: 'reasoning', content: parsedEvent.reasoningDelta };
+          continue;
+        }
+        if (parsedEvent.webSearchStatus) {
+          const webSearchStatusText: Record<'searching' | 'in_progress' | 'completed', string> = {
+            searching: '正在联网搜索...',
+            in_progress: '正在整理联网结果...',
+            completed: '联网搜索已完成',
+          };
+          yield {
+            type: 'thinking',
+            message: webSearchStatusText[parsedEvent.webSearchStatus],
+          };
           continue;
         }
         if (parsedEvent.toolCallArgumentDelta) {

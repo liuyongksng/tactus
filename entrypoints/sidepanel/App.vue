@@ -35,6 +35,8 @@ import {
 import {
   getSharePageContent,
   setSharePageContent,
+  getWebSearchEnabled,
+  setWebSearchEnabled,
   setCurrentSessionId,
   getAllSessions,
   getSessionsPaginated,
@@ -83,6 +85,7 @@ const i18n = (key: keyof Translations, params?: Record<string, string | number>)
 const messages = shallowRef<ChatMessage[]>([]);
 const inputText = ref('');
 const sharePageContent = ref(false);
+const webSearchEnabled = ref(false);
 const pendingQuote = ref<string | null>(null);
 const isLoading = ref(false);
 const showHistory = ref(false);
@@ -381,6 +384,7 @@ async function regenerateResponse(): Promise<void> {
       messages.value.slice(0, -1),
       {
         sharePageContent: sharePageContent.value,
+        webSearchEnabled: isResponsesMode.value && webSearchEnabled.value,
         skills: skillsInfo,
         mcpTools: mcpTools.value,
         pageInfo,
@@ -525,6 +529,11 @@ const activeTabButtonTitle = computed(() => {
   return `${activeTabInfo.value.title} · ${statusText}`;
 });
 
+const webSearchButtonTitle = computed(() => {
+  if (!isResponsesMode.value) return i18n('webSearch');
+  return webSearchEnabled.value ? i18n('webSearchOn') : i18n('webSearchOff');
+});
+
 // Format timestamp
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp);
@@ -574,6 +583,11 @@ async function refreshActiveTabInfo(): Promise<void> {
 
 async function toggleShareCurrentTab(): Promise<void> {
   sharePageContent.value = !sharePageContent.value;
+}
+
+function toggleWebSearch(): void {
+  if (!isResponsesMode.value) return;
+  webSearchEnabled.value = !webSearchEnabled.value;
 }
 
 function removePendingImage(imageId: string): void {
@@ -814,6 +828,7 @@ onMounted(async () => {
   const activeProvider = await getActiveProvider();
   activeProviderId.value = activeProvider?.id || null;
   sharePageContent.value = await getSharePageContent();
+  webSearchEnabled.value = await getWebSearchEnabled();
   selectionQuoteEnabled.value = await getSelectionQuoteEnabled();
   maxPageContentLength.value = await getMaxPageContentLength();
   maxToolCalls.value = await getMaxToolCalls();
@@ -1042,6 +1057,10 @@ onUnmounted(() => {
 // Watch share page content toggle
 watch(sharePageContent, async (val) => {
   await setSharePageContent(val);
+});
+
+watch(webSearchEnabled, async (val) => {
+  await setWebSearchEnabled(val);
 });
 
 watch(activeModelSupportsVision, (enabled) => {
@@ -1419,6 +1438,7 @@ async function sendMessage() {
       messages.value.slice(0, -1), 
       {
         sharePageContent: sharePageContent.value,
+        webSearchEnabled: isResponsesMode.value && webSearchEnabled.value,
         skills: skillsInfo,
         mcpTools: mcpTools.value,
         pageInfo,
@@ -2006,22 +2026,37 @@ function rejectScript() {
 
     <!-- Input area -->
     <div class="input-area">
-      <div class="tab-share-row">
+      <div class="chat-toolbar">
+        <div class="tab-share-row">
+          <button
+            class="current-tab-chip"
+            :class="{ active: sharePageContent, disabled: !activeTabInfo }"
+            :disabled="!activeTabInfo"
+            :title="activeTabButtonTitle"
+            @click="toggleShareCurrentTab"
+          >
+            <span class="tab-favicon" :class="{ placeholder: !activeTabInfo?.faviconUrl }">
+              <img v-if="activeTabInfo?.faviconUrl" :src="activeTabInfo.faviconUrl" alt="" />
+              <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="9"/>
+                <path d="M3 12h18M12 3a14.5 14.5 0 0 1 0 18M12 3a14.5 14.5 0 0 0 0 18"/>
+              </svg>
+            </span>
+            <span class="tab-title">{{ activeTabInfo?.title || i18n('currentTab') }}</span>
+          </button>
+        </div>
         <button
-          class="current-tab-chip"
-          :class="{ active: sharePageContent, disabled: !activeTabInfo }"
-          :disabled="!activeTabInfo"
-          :title="activeTabButtonTitle"
-          @click="toggleShareCurrentTab"
+          v-if="isResponsesMode"
+          class="network-toggle"
+          :class="{ active: webSearchEnabled }"
+          type="button"
+          :aria-pressed="webSearchEnabled"
+          :title="webSearchButtonTitle"
+          @click="toggleWebSearch"
         >
-          <span class="tab-favicon" :class="{ placeholder: !activeTabInfo?.faviconUrl }">
-            <img v-if="activeTabInfo?.faviconUrl" :src="activeTabInfo.faviconUrl" alt="" />
-            <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="9"/>
-              <path d="M3 12h18M12 3a14.5 14.5 0 0 1 0 18M12 3a14.5 14.5 0 0 0 0 18"/>
-            </svg>
-          </span>
-          <span class="tab-title">{{ activeTabInfo?.title || i18n('currentTab') }}</span>
+          <span class="network-indicator" aria-hidden="true"></span>
+          <span class="network-text">{{ i18n('webSearch') }}</span>
+          <span class="network-state">{{ webSearchEnabled ? i18n('webSearchOn') : i18n('webSearchOff') }}</span>
         </button>
       </div>
 

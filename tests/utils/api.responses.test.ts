@@ -3,6 +3,7 @@ import {
   buildResponsesReasoning,
   buildResponsesInstructions,
   buildResponsesPromptInjectionPayload,
+  buildResponsesTools,
   buildSystemMessage,
   buildResponsesInput,
   buildSessionHeaders,
@@ -162,6 +163,16 @@ describe('parseResponsesStreamEvent', () => {
       arguments: '{"skill_name":"fetch-linuxdo-post"}',
     });
   });
+
+  it('应解析 web_search_call 状态事件', () => {
+    const parsed = parseResponsesStreamEvent({
+      type: 'response.web_search_call.searching',
+      response_id: 'resp_search_1',
+    });
+
+    expect(parsed.responseId).toBe('resp_search_1');
+    expect(parsed.webSearchStatus).toBe('searching');
+  });
 });
 
 describe('buildResponsesReasoning', () => {
@@ -212,6 +223,65 @@ describe('buildResponsesReasoning', () => {
       summary: 'auto',
       downgradedFrom: 'xhigh',
     });
+  });
+});
+
+describe('buildResponsesTools', () => {
+  function createProvider(overrides: Partial<AIProvider> = {}): AIProvider {
+    return {
+      id: 'provider_tools',
+      name: 'Tools Provider',
+      baseUrl: 'https://example.com/v1',
+      apiKey: 'test-key',
+      models: ['gpt-5.2'],
+      selectedModel: 'gpt-5.2',
+      visionModelSupport: { 'gpt-5.2': false },
+      apiMode: 'responses',
+      systemPromptTemplate: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+      responsesSystemPromptMode: 'instructions',
+      responsesReasoningEffort: 'medium',
+      responsesReasoningSummary: 'auto',
+      ...overrides,
+    };
+  }
+
+  it('应在 responses 且联网开启时追加 web_search 工具', () => {
+    const provider = createProvider({ apiMode: 'responses' });
+    const baseTools = [{ type: 'function', name: 'extract_page_content' }];
+
+    expect(buildResponsesTools(provider, baseTools, { webSearchEnabled: true })).toEqual([
+      { type: 'function', name: 'extract_page_content' },
+      { type: 'web_search', search_context_size: 'medium' },
+    ]);
+  });
+
+  it('应在 responses 但联网关闭时不追加 web_search', () => {
+    const provider = createProvider({ apiMode: 'responses' });
+    const baseTools = [{ type: 'function', name: 'extract_page_content' }];
+
+    expect(buildResponsesTools(provider, baseTools, { webSearchEnabled: false })).toEqual([
+      { type: 'function', name: 'extract_page_content' },
+    ]);
+  });
+
+  it('应在非 responses 模式下不追加 web_search', () => {
+    const provider = createProvider({ apiMode: 'auto' });
+
+    expect(buildResponsesTools(provider, undefined, { webSearchEnabled: true })).toBeUndefined();
+  });
+
+  it('应在 enableTools=false 时不注入任何 tools（包括 web_search）', () => {
+    const provider = createProvider({ apiMode: 'responses' });
+    const baseTools = [{ type: 'function', name: 'extract_page_content' }];
+
+    expect(
+      buildResponsesTools(
+        provider,
+        baseTools,
+        { webSearchEnabled: true },
+        { enableTools: false },
+      ),
+    ).toBeUndefined();
   });
 });
 
