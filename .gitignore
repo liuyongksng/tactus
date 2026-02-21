@@ -24,3 +24,6 @@ web-ext.config.ts
 *.sln
 *.sw?
 .claude/settings.local.json
+
+
+helloagents

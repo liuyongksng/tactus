@@ -16,7 +16,10 @@ export interface AIProvider {
   models: string[];
   selectedModel: string;
   visionModelSupport: Record<string, boolean>;
+  apiMode: ProviderApiMode;
 }
+
+export type ProviderApiMode = 'auto' | 'chat_completions' | 'responses';
 
 export interface TrustedScript {
   skillId: string;
@@ -304,6 +307,13 @@ type LegacyProvider = Partial<AIProvider> & {
   visionModelSupport?: Record<string, boolean> | undefined;
 };
 
+function normalizeApiMode(value: unknown): ProviderApiMode {
+  if (value === 'chat_completions' || value === 'responses') {
+    return value;
+  }
+  return 'auto';
+}
+
 function normalizeModelList(models: unknown): string[] {
   if (!Array.isArray(models)) return [];
   return Array.from(
@@ -342,6 +352,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
       ? legacyProvider.selectedModel
       : models[0] || '';
   const visionModelSupport = normalizeVisionModelSupport(models, legacyProvider);
+  const apiMode = normalizeApiMode(legacyProvider.apiMode);
 
   return {
     id: provider.id,
@@ -351,6 +362,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     models,
     selectedModel,
     visionModelSupport,
+    apiMode,
   };
 }
 

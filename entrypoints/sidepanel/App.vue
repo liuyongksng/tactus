@@ -3,6 +3,7 @@ import { ref, shallowRef, triggerRef, onMounted, onUnmounted, nextTick, watch, c
 import { marked } from 'marked';
 import {
   getAllProviders,
+  getProvider,
   saveProvider as saveProviderToDB,
   getActiveProvider,
   setActiveProviderId,
@@ -375,7 +376,14 @@ async function regenerateResponse(): Promise<void> {
     for await (const event of streamChat(
       provider,
       messages.value.slice(0, -1),
-      { sharePageContent: sharePageContent.value, skills: skillsInfo, mcpTools: mcpTools.value, pageInfo, language: currentLanguage },
+      {
+        sharePageContent: sharePageContent.value,
+        skills: skillsInfo,
+        mcpTools: mcpTools.value,
+        pageInfo,
+        language: currentLanguage,
+        sessionKey: currentSession.value?.id,
+      },
       reactConfig,
       undefined, // retryConfig 使用默认值
       hasValidPreviousContext ? previousApiMessages : undefined
@@ -1391,7 +1399,14 @@ async function sendMessage() {
     for await (const event of streamChat(
       provider, 
       messages.value.slice(0, -1), 
-      { sharePageContent: sharePageContent.value, skills: skillsInfo, mcpTools: mcpTools.value, pageInfo, language: currentLanguage }, 
+      {
+        sharePageContent: sharePageContent.value,
+        skills: skillsInfo,
+        mcpTools: mcpTools.value,
+        pageInfo,
+        language: currentLanguage,
+        sessionKey: currentSession.value?.id,
+      }, 
       reactConfig,
       undefined, // retryConfig 使用默认值
       hasValidPreviousContext ? previousApiMessages : undefined
@@ -1550,7 +1565,6 @@ function openSettings() {
 // Select provider and model
 async function selectProviderModel(providerId: string, model: string) {
   // 从 storage 重新获取最新的 provider 数据，避免使用可能不完整的内存数据
-  const { getProvider } = await import('../../utils/storage');
   const freshProvider = await getProvider(providerId);
   
   if (!freshProvider) {

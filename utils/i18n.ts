@@ -32,6 +32,11 @@ export interface Translations {
   baseUrlHint: string;
   apiKey: string;
   apiKeyPlaceholder: string;
+  apiMode: string;
+  apiModeDesc: string;
+  apiModeAuto: string;
+  apiModeChatCompletions: string;
+  apiModeResponses: string;
   modelList: string;
   fetchModels: string;
   fetchingModels: string;
@@ -216,9 +221,14 @@ const en: Translations = {
   providerNamePlaceholder: 'e.g. OpenAI, DeepSeek',
   baseUrl: 'Base URL',
   baseUrlPlaceholder: 'https://api.openai.com',
-  baseUrlHint: 'Defaults to auto-completing /v1/chat/completions. If the URL ends with "/", only /chat/completions is appended.',
+  baseUrlHint: 'Defaults to auto-completing /v1. If the URL ends with "/", SDK keeps it as-is and appends endpoint paths directly.',
   apiKey: 'API Key',
   apiKeyPlaceholder: 'sk-...',
+  apiMode: 'API Mode',
+  apiModeDesc: 'Choose request endpoint. Auto tries Responses first and falls back to Chat Completions.',
+  apiModeAuto: 'Auto (recommended)',
+  apiModeChatCompletions: 'Chat Completions',
+  apiModeResponses: 'Responses',
   modelList: 'Models',
   fetchModels: 'Fetch Models',
   fetchingModels: 'Fetching...',
@@ -403,9 +413,14 @@ const zhCN: Translations = {
   providerNamePlaceholder: '例如：OpenAI, DeepSeek',
   baseUrl: 'Base URL',
   baseUrlPlaceholder: 'https://api.openai.com',
-  baseUrlHint: '默认自动补全 /v1/chat/completions，若以 / 结尾则只补全 /chat/completions',
+  baseUrlHint: '默认自动补全 /v1；若以 / 结尾则保持原样并直接拼接接口路径',
   apiKey: 'API Key',
   apiKeyPlaceholder: 'sk-...',
+  apiMode: 'API 模式',
+  apiModeDesc: '选择请求接口。自动模式会优先尝试 Responses，失败时回退到 Chat Completions。',
+  apiModeAuto: '自动（推荐）',
+  apiModeChatCompletions: 'Chat Completions',
+  apiModeResponses: 'Responses',
   modelList: '模型列表',
   fetchModels: '获取可用模型',
   fetchingModels: '获取中...',

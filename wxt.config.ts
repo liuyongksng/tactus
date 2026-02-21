@@ -2,6 +2,7 @@ import { defineConfig } from 'wxt';
 
 export default defineConfig({
   modules: ['@wxt-dev/module-vue'],
+  imports: false,
   manifest: {
     name: 'Tactus',
     description: 'AI Assistant with OpenAI-compatible API support',

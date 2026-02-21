@@ -3,8 +3,9 @@
  * 为浏览器扩展环境适配 OAuth 流程
  */
 
-import type { OAuthClientProvider, OAuthTokens, OAuthClientInformationMixed, OAuthClientMetadata } from '@modelcontextprotocol/sdk/shared/auth.js';
+import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { exchangeAuthorization, discoverOAuthMetadata } from '@modelcontextprotocol/sdk/client/auth.js';
+import type { OAuthTokens, OAuthClientInformationMixed, OAuthClientMetadata } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { storage } from '@wxt-dev/storage';
 
 // ==================== 类型定义 ====================
@@ -17,7 +18,7 @@ export interface McpOAuthData {
 
 // ==================== Storage ====================
 
-function getOAuthStorageKey(serverId: string): string {
+function getOAuthStorageKey(serverId: string): `local:${string}` {
   return `local:mcpOAuth_${serverId}`;
 }
 
@@ -64,7 +65,7 @@ export function createExtensionOAuthProvider(serverId: string, serverUrl: string
      */
     get clientMetadata(): OAuthClientMetadata {
       return {
-        redirect_uris: [new URL(redirectUrl)],
+        redirect_uris: [redirectUrl],
         client_name: 'Tactus Browser Extension',
         grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],
@@ -85,6 +86,9 @@ export function createExtensionOAuthProvider(serverId: string, serverUrl: string
           url: authorizationUrl.toString(),
           interactive: true,
         });
+        if (!callbackUrl) {
+          throw new Error('未获取到 OAuth 回调地址');
+        }
         
         console.log('[MCP OAuth] 授权回调:', callbackUrl);
         

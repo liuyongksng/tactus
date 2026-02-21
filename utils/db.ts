@@ -4,6 +4,7 @@
  */
 
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
+import { removeTrustedScriptsBySkillId } from './storage';
 
 // 数据库 Schema 定义
 export interface AppDBSchema extends DBSchema {
@@ -368,7 +369,6 @@ export async function deleteSkill(id: string): Promise<void> {
   await tx.done;
   
   // 删除信任记录（从 WXT storage）
-  const { removeTrustedScriptsBySkillId } = await import('./storage');
   await removeTrustedScriptsBySkillId(id);
 }
 

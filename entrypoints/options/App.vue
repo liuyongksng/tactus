@@ -25,6 +25,7 @@ import {
   watchThemeMode,
   applyTheme,
   type AIProvider,
+  type ProviderApiMode,
   type TrustedScript,
   type Language,
 } from '../../utils/storage';
@@ -89,6 +90,7 @@ const isSaving = ref(false);
 const formName = ref('');
 const formBaseUrl = ref('');
 const formApiKey = ref('');
+const formApiMode = ref<ProviderApiMode>('auto');
 const formModels = ref<string[]>([]);
 const formCustomModel = ref('');
 const formVisionModelSupport = ref<Record<string, boolean>>({});
@@ -196,6 +198,7 @@ function selectProvider(id: string) {
     formName.value = provider.name;
     formBaseUrl.value = provider.baseUrl;
     formApiKey.value = provider.apiKey;
+    formApiMode.value = provider.apiMode || 'auto';
     formModels.value = Array.isArray(provider.models) ? [...provider.models] : [];
     formVisionModelSupport.value = { ...(provider.visionModelSupport || {}) };
     formCustomModel.value = '';
@@ -208,6 +211,7 @@ function addNewProvider() {
   formName.value = '';
   formBaseUrl.value = '';
   formApiKey.value = '';
+  formApiMode.value = 'auto';
   formModels.value = [];
   formVisionModelSupport.value = {};
   formCustomModel.value = '';
@@ -275,6 +279,7 @@ async function saveCurrentProvider() {
       name: formName.value,
       baseUrl: formBaseUrl.value,
       apiKey: formApiKey.value,
+      apiMode: formApiMode.value,
       models: [...formModels.value],
       selectedModel,
       visionModelSupport: Object.fromEntries(
@@ -642,6 +647,15 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                 <div class="form-group">
                   <label>{{ i18n('apiKey') }}</label>
                   <input v-model="formApiKey" type="password" :placeholder="i18n('apiKeyPlaceholder')" />
+                </div>
+                <div class="form-group">
+                  <label>{{ i18n('apiMode') }}</label>
+                  <select v-model="formApiMode">
+                    <option value="auto">{{ i18n('apiModeAuto') }}</option>
+                    <option value="chat_completions">{{ i18n('apiModeChatCompletions') }}</option>
+                    <option value="responses">{{ i18n('apiModeResponses') }}</option>
+                  </select>
+                  <p class="form-hint">{{ i18n('apiModeDesc') }}</p>
                 </div>
                 <div class="form-group">
                   <div class="label-row">

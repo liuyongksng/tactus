@@ -259,6 +259,15 @@ export interface FunctionCallingConfig {
   abortSignal?: AbortSignal;
 }
 
+export interface StreamChatContext {
+  sharePageContent?: boolean;
+  skills?: SkillInfo[];
+  mcpTools?: McpTool[];
+  pageInfo?: { domain: string; title: string; url?: string };
+  language?: Language;
+  sessionKey?: string;
+}
+
 // 流式聊天事件类型
 export type StreamEvent = 
   | { type: 'content'; content: string }
@@ -345,6 +354,198 @@ function convertTools(tools: FunctionTool[]): ChatCompletionTool[] {
       parameters: t.function.parameters,
     },
   }));
+}
+
+function convertToolsToResponses(tools: FunctionTool[]): Array<Record<string, unknown>> {
+  return tools.map(t => ({
+    type: 'function',
+    name: t.function.name,
+    description: t.function.description,
+    parameters: t.function.parameters,
+  }));
+}
+
+function convertMessageContentToResponsesInput(content: ApiMessageContent): string | Array<Record<string, unknown>> {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+
+  const parts: Array<Record<string, unknown>> = [];
+  for (const part of content) {
+    if (part.type === 'text') {
+      parts.push({
+        type: 'input_text',
+        text: part.text,
+      });
+      continue;
+    }
+    if (part.type === 'image_url') {
+      parts.push({
+        type: 'input_image',
+        image_url: part.image_url.url,
+      });
+    }
+  }
+  return parts;
+}
+
+export function buildResponsesInput(messages: ApiMessage[]): Array<Record<string, unknown>> {
+  const items: Array<Record<string, unknown>> = [];
+  const seenToolCallIds = new Set<string>();
+
+  for (const message of messages) {
+    if (message.role === 'assistant' && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+      const content = convertMessageContentToResponsesInput(message.content);
+      const hasContent =
+        (typeof content === 'string' && content.trim().length > 0) ||
+        (Array.isArray(content) && content.length > 0);
+
+      if (hasContent) {
+        items.push({
+          type: 'message',
+          role: 'assistant',
+          content,
+        });
+      }
+
+      for (const toolCall of message.tool_calls) {
+        const callId = typeof toolCall?.id === 'string' ? toolCall.id.trim() : '';
+        const toolName = typeof toolCall?.function?.name === 'string' ? toolCall.function.name.trim() : '';
+        const rawArguments = toolCall?.function?.arguments;
+        if (!callId || !toolName) continue;
+
+        seenToolCallIds.add(callId);
+        items.push({
+          type: 'function_call',
+          call_id: callId,
+          name: toolName,
+          arguments:
+            typeof rawArguments === 'string'
+              ? rawArguments
+              : JSON.stringify(rawArguments ?? {}),
+        });
+      }
+      continue;
+    }
+
+    if (message.role === 'tool' && message.tool_call_id) {
+      if (!seenToolCallIds.has(message.tool_call_id)) {
+        console.warn(
+          `[buildResponsesInput] 跳过未匹配的 function_call_output: ${message.tool_call_id}`,
+        );
+        continue;
+      }
+      items.push({
+        type: 'function_call_output',
+        call_id: message.tool_call_id,
+        output: typeof message.content === 'string' ? message.content : JSON.stringify(message.content ?? ''),
+      });
+      continue;
+    }
+
+    if (message.role !== 'system' && message.role !== 'user' && message.role !== 'assistant') {
+      continue;
+    }
+
+    items.push({
+      type: 'message',
+      role: message.role === 'system' ? 'developer' : message.role,
+      content: convertMessageContentToResponsesInput(message.content),
+    });
+  }
+
+  return items;
+}
+
+export function buildSessionHeaders(sessionKey?: string): Record<string, string> | undefined {
+  const normalized = typeof sessionKey === 'string' ? sessionKey.trim() : '';
+  if (!normalized) return undefined;
+  return {
+    session_id: normalized,
+    'x-session-id': normalized,
+  };
+}
+
+export interface ParsedResponsesStreamEvent {
+  type: string;
+  responseId?: string;
+  contentDelta?: string;
+  reasoningDelta?: string;
+  toolCallArgumentDelta?: { callId: string; name?: string; delta?: string };
+  toolCallDone?: { callId: string; name?: string; arguments?: string };
+  toolCallItemDone?: { callId: string; name?: string; arguments?: string };
+}
+
+export function parseResponsesStreamEvent(event: unknown): ParsedResponsesStreamEvent {
+  const evt = event as any;
+  const type = typeof evt?.type === 'string' ? evt.type : '';
+  const responseId =
+    (typeof evt?.response?.id === 'string' ? evt.response.id : undefined) ||
+    (typeof evt?.response_id === 'string' ? evt.response_id : undefined);
+
+  const parsed: ParsedResponsesStreamEvent = {
+    type,
+    responseId,
+  };
+
+  if (type === 'response.output_text.delta' && typeof evt?.delta === 'string' && evt.delta.length > 0) {
+    parsed.contentDelta = evt.delta;
+    return parsed;
+  }
+
+  if ((type.includes('reasoning') || type.includes('summary')) && typeof evt?.delta === 'string' && evt.delta.length > 0) {
+    parsed.reasoningDelta = evt.delta;
+    return parsed;
+  }
+
+  if (type === 'response.function_call_arguments.delta') {
+    const callId = typeof evt?.call_id === 'string' ? evt.call_id : '';
+    if (callId) {
+      parsed.toolCallArgumentDelta = {
+        callId,
+        name: typeof evt?.name === 'string' ? evt.name : undefined,
+        delta: typeof evt?.delta === 'string' ? evt.delta : undefined,
+      };
+    }
+    return parsed;
+  }
+
+  if (type === 'response.function_call_arguments.done') {
+    const callId = typeof evt?.call_id === 'string' ? evt.call_id : '';
+    if (callId) {
+      parsed.toolCallDone = {
+        callId,
+        name: typeof evt?.name === 'string' ? evt.name : undefined,
+        arguments: typeof evt?.arguments === 'string' ? evt.arguments : undefined,
+      };
+    }
+    return parsed;
+  }
+
+  if (type === 'response.output_item.done' && evt?.item?.type === 'function_call') {
+    const callId = typeof evt.item.call_id === 'string' ? evt.item.call_id : '';
+    if (callId) {
+      parsed.toolCallItemDone = {
+        callId,
+        name: typeof evt.item.name === 'string' ? evt.item.name : undefined,
+        arguments: typeof evt.item.arguments === 'string' ? evt.item.arguments : undefined,
+      };
+    }
+  }
+
+  return parsed;
+}
+
+function shouldUseResponsesMode(provider: AIProvider): boolean {
+  return provider.apiMode !== 'chat_completions';
+}
+
+function shouldFallbackToChatCompletions(error: ApiError): boolean {
+  return (
+    error.code === 'INVALID_REQUEST' ||
+    error.code === 'MODEL_NOT_FOUND' ||
+    error.code === 'UNKNOWN' ||
+    error.code === 'SERVER_ERROR'
+  );
 }
 
 // 转换消息格式为 OpenAI SDK 格式
@@ -439,10 +640,10 @@ function sanitizeMessagesForVision(messages: ApiMessage[], allowImages: boolean)
 }
 
 
-export async function* streamChat(
+async function* streamChatWithChatCompletions(
   provider: AIProvider,
   messages: ChatMessage[],
-  context?: { sharePageContent?: boolean; skills?: SkillInfo[]; mcpTools?: McpTool[]; pageInfo?: { domain: string; title: string; url?: string }; language?: Language },
+  context?: StreamChatContext,
   config?: FunctionCallingConfig,
   retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG,
   previousApiMessages?: ApiMessage[]  // 新增：传入之前保存的完整 API 上下文
@@ -452,6 +653,7 @@ export async function* streamChat(
   const maxIterations = config?.maxIterations || 5;
   const maxToolCalls = Math.max(1, config?.maxToolCalls || 100);
   const allowImages = isVisionSupportedForModel(provider, provider.selectedModel);
+  const sessionHeaders = buildSessionHeaders(context?.sessionKey);
   const abortSignal = config?.abortSignal;
   const ensureNotAborted = () => {
     if (abortSignal?.aborted) {
@@ -526,15 +728,19 @@ export async function* streamChat(
       const { controller, clear } = createTimeoutController(retryConfig.timeout, abortSignal);
       
       try {
+        const requestOptions: Record<string, unknown> = {
+          signal: controller.signal,
+        };
+        if (sessionHeaders) {
+          requestOptions.headers = sessionHeaders;
+        }
         stream = await client.chat.completions.create({
           model: provider.selectedModel,
           messages: convertToOpenAIMessages(currentMessages),
           tools: openaiTools,
           tool_choice: openaiTools ? 'auto' : undefined,
           stream: true,
-        }, {
-          signal: controller.signal,
-        });
+        }, requestOptions as any);
         
         clear();
         lastError = null;
@@ -860,6 +1066,384 @@ export async function* streamChat(
   }
   
   yield { type: 'done' };
+}
+
+async function* streamChatWithResponses(
+  provider: AIProvider,
+  messages: ChatMessage[],
+  context?: StreamChatContext,
+  config?: FunctionCallingConfig,
+  retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG,
+  previousApiMessages?: ApiMessage[],
+): AsyncGenerator<StreamEvent, void, unknown> {
+  const enableTools = config?.enableTools ?? true;
+  const toolExecutor = config?.toolExecutor;
+  const maxIterations = config?.maxIterations || 5;
+  const maxToolCalls = Math.max(1, config?.maxToolCalls || 100);
+  const allowImages = isVisionSupportedForModel(provider, provider.selectedModel);
+  const abortSignal = config?.abortSignal;
+  const sessionHeaders = buildSessionHeaders(context?.sessionKey);
+  const promptCacheKey = typeof context?.sessionKey === 'string' ? context.sessionKey.trim() : '';
+  const ensureNotAborted = () => {
+    if (abortSignal?.aborted) {
+      throw createUserAbortError();
+    }
+  };
+
+  const client = createClient(provider);
+
+  const basePrompt = `You are a helpful AI assistant. Always respond using Markdown format for better readability. Use:
+- Headers (##, ###) for sections
+- **bold** and *italic* for emphasis
+- \`code\` for inline code and \`\`\` for code blocks with language specification
+- Lists (- or 1.) for enumerations
+- > for quotes
+- Tables when presenting structured data`;
+
+  const contextPrompt = generateContextPrompt(context);
+  const systemMessage = `${basePrompt}\n\n${contextPrompt}`;
+
+  let apiMessages: ApiMessage[];
+  if (previousApiMessages && previousApiMessages.length > 0) {
+    apiMessages = sanitizeMessagesForVision(previousApiMessages, allowImages);
+    if (apiMessages[0]?.role === 'system') {
+      apiMessages[0].content = systemMessage;
+    }
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage && lastMessage.role === 'user') {
+      apiMessages.push({
+        role: 'user',
+        content: buildUserMessageContent(lastMessage, allowImages),
+      });
+    }
+  } else {
+    apiMessages = [
+      { role: 'system', content: systemMessage },
+      ...messages.map(m => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.role === 'user' ? buildUserMessageContent(m, allowImages) : m.content,
+      })),
+    ];
+  }
+
+  lastApiMessages = [...apiMessages];
+
+  const tools = enableTools ? getFilteredTools(context) : [];
+  const responseTools = tools.length > 0 ? convertToolsToResponses(tools) : undefined;
+
+  let iteration = 0;
+  let currentMessages = [...apiMessages];
+  let toolCallRetryCount = 0;
+  const maxToolCallRetries = 3;
+  let executedToolCallCount = 0;
+
+  while (iteration < maxIterations) {
+    ensureNotAborted();
+    iteration++;
+
+    const responseInput = buildResponsesInput(currentMessages);
+
+    let stream: AsyncIterable<any> | undefined;
+    let lastError: ApiError | null = null;
+
+    for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
+      ensureNotAborted();
+      const { controller, clear } = createTimeoutController(retryConfig.timeout, abortSignal);
+
+      try {
+        const requestBody: Record<string, unknown> = {
+          model: provider.selectedModel,
+          input: responseInput,
+          stream: true,
+        };
+        if (responseTools) {
+          requestBody.tools = responseTools;
+        }
+        if (promptCacheKey) {
+          requestBody.prompt_cache_key = promptCacheKey;
+        }
+
+        const requestOptions: Record<string, unknown> = {
+          signal: controller.signal,
+        };
+        if (sessionHeaders) {
+          requestOptions.headers = sessionHeaders;
+        }
+
+        stream = await (client.responses.create as any)(requestBody, requestOptions);
+
+        clear();
+        lastError = null;
+        break;
+      } catch (error) {
+        clear();
+        if (abortSignal?.aborted) {
+          throw createUserAbortError(error);
+        }
+
+        lastError = parseError(error);
+        if (!lastError.retryable) {
+          yield { type: 'error', error: lastError, retrying: false, attempt };
+          throw lastError;
+        }
+        if (attempt >= retryConfig.maxRetries) {
+          yield { type: 'error', error: lastError, retrying: false, attempt };
+          throw lastError;
+        }
+
+        const retryDelay = getRetryDelay(attempt, retryConfig);
+        yield {
+          type: 'error',
+          error: lastError,
+          retrying: true,
+          attempt,
+        };
+        yield {
+          type: 'thinking',
+          message: `请求失败，${Math.round(retryDelay / 1000)} 秒后重试 (${attempt + 1}/${retryConfig.maxRetries})...`,
+        };
+        await delay(retryDelay);
+        ensureNotAborted();
+      }
+    }
+
+    if (!stream) {
+      throw lastError || new ApiError('未知错误', 'UNKNOWN', false);
+    }
+
+    let fullContent = '';
+    let fullReasoning = '';
+    const toolCallsById: Map<string, { id: string; name: string; arguments: string }> = new Map();
+
+    try {
+      for await (const event of stream) {
+        ensureNotAborted();
+        const parsedEvent = parseResponsesStreamEvent(event);
+        if (parsedEvent.contentDelta) {
+          fullContent += parsedEvent.contentDelta;
+          yield { type: 'content', content: parsedEvent.contentDelta };
+          continue;
+        }
+        if (parsedEvent.reasoningDelta) {
+          fullReasoning += parsedEvent.reasoningDelta;
+          yield { type: 'reasoning', content: parsedEvent.reasoningDelta };
+          continue;
+        }
+        if (parsedEvent.toolCallArgumentDelta) {
+          const deltaEvent = parsedEvent.toolCallArgumentDelta;
+          const existing = toolCallsById.get(deltaEvent.callId) || {
+            id: deltaEvent.callId,
+            name: '',
+            arguments: '',
+          };
+          if (deltaEvent.name) {
+            existing.name = deltaEvent.name;
+          }
+          if (deltaEvent.delta && !isJsonClosed(existing.arguments)) {
+            existing.arguments += deltaEvent.delta;
+          }
+          toolCallsById.set(deltaEvent.callId, existing);
+          continue;
+        }
+        if (parsedEvent.toolCallDone) {
+          const doneEvent = parsedEvent.toolCallDone;
+          const existing = toolCallsById.get(doneEvent.callId) || {
+            id: doneEvent.callId,
+            name: '',
+            arguments: '',
+          };
+          if (doneEvent.name) {
+            existing.name = doneEvent.name;
+          }
+          if (doneEvent.arguments) {
+            existing.arguments = doneEvent.arguments;
+          }
+          toolCallsById.set(doneEvent.callId, existing);
+          continue;
+        }
+        if (parsedEvent.toolCallItemDone) {
+          const itemEvent = parsedEvent.toolCallItemDone;
+          const existing = toolCallsById.get(itemEvent.callId) || {
+            id: itemEvent.callId,
+            name: '',
+            arguments: '',
+          };
+          if (itemEvent.name) {
+            existing.name = itemEvent.name;
+          }
+          if (itemEvent.arguments) {
+            existing.arguments = itemEvent.arguments;
+          }
+          toolCallsById.set(itemEvent.callId, existing);
+        }
+      }
+    } catch (streamError) {
+      if (abortSignal?.aborted) {
+        throw createUserAbortError(streamError);
+      }
+      const apiError = parseError(streamError);
+      yield { type: 'error', error: apiError, retrying: false, attempt: retryConfig.maxRetries };
+      throw apiError;
+    }
+
+    const toolCalls = Array.from(toolCallsById.values()).filter(tc => tc.id && tc.name);
+
+    if (toolCalls.length > 0 && toolExecutor) {
+      ensureNotAborted();
+
+      for (const tc of toolCalls) {
+        if (tc.arguments) {
+          tc.arguments = tryFixIncompleteJson(tc.arguments);
+        }
+      }
+
+      let hasParseError = false;
+      for (const tc of toolCalls) {
+        try {
+          if (tc.arguments) JSON.parse(tc.arguments);
+        } catch (e) {
+          hasParseError = true;
+          console.error('[Tool Args Parse Error] 工具参数解析失败，将剔除本次模型回复并重试');
+          console.error('  工具名:', tc.name);
+          console.error('  原始参数:', tc.arguments);
+          console.error('  错误:', e);
+          break;
+        }
+      }
+
+      if (hasParseError) {
+        toolCallRetryCount++;
+        if (toolCallRetryCount >= maxToolCallRetries) {
+          const error = new ApiError(
+            `工具调用失败：参数解析错误，已重试 ${maxToolCallRetries} 次`,
+            'TOOL_PARSE_ERROR',
+            false,
+          );
+          yield { type: 'error', error, retrying: false, attempt: toolCallRetryCount };
+          throw error;
+        }
+        yield {
+          type: 'thinking',
+          message: `工具参数解析错误，正在重试 (${toolCallRetryCount}/${maxToolCallRetries})...`,
+        };
+        continue;
+      }
+
+      const assistantToolCalls = toolCalls.map(tc => ({
+        id: tc.id,
+        type: 'function' as const,
+        function: {
+          name: tc.name,
+          arguments: tc.arguments,
+        },
+      }));
+
+      currentMessages.push({
+        role: 'assistant',
+        content: fullContent || null,
+        reasoning: fullReasoning || null,
+        tool_calls: assistantToolCalls,
+      });
+      lastApiMessages = [...currentMessages];
+
+      let hasExecutionError = false;
+      for (const tc of toolCalls) {
+        ensureNotAborted();
+        if (executedToolCallCount >= maxToolCalls) {
+          const error = new ApiError(
+            `工具调用次数已达上限（${maxToolCalls}）`,
+            'TOOL_CALL_LIMIT_EXCEEDED',
+            false,
+          );
+          yield { type: 'error', error, retrying: false, attempt: executedToolCallCount };
+          throw error;
+        }
+
+        const parsedArgs = JSON.parse(tc.arguments || '{}');
+        const toolCall: ToolCall = {
+          id: tc.id,
+          name: tc.name,
+          arguments: parsedArgs,
+        };
+
+        yield { type: 'tool_call', toolCall };
+        yield { type: 'thinking', message: getToolStatusText(tc.name, parsedArgs) };
+
+        executedToolCallCount++;
+        const result = await toolExecutor(toolCall);
+        yield { type: 'tool_result', result };
+
+        if (!result.success) {
+          hasExecutionError = true;
+          toolCallRetryCount++;
+          if (toolCallRetryCount >= maxToolCallRetries) {
+            const error = new ApiError(
+              `工具执行失败：${result.result}，已重试 ${maxToolCallRetries} 次`,
+              'TOOL_EXECUTION_ERROR',
+              false,
+            );
+            yield { type: 'error', error, retrying: false, attempt: toolCallRetryCount };
+            throw error;
+          }
+          yield {
+            type: 'thinking',
+            message: `工具执行失败，正在重试 (${toolCallRetryCount}/${maxToolCallRetries})...`,
+          };
+          break;
+        }
+
+        currentMessages.push({
+          role: 'tool',
+          content: result.result,
+          tool_call_id: tc.id,
+          name: tc.name,
+        });
+        lastApiMessages = [...currentMessages];
+      }
+
+      if (hasExecutionError) {
+        currentMessages.pop();
+        continue;
+      }
+      continue;
+    }
+
+    lastApiMessages = [...currentMessages];
+    if (fullContent || fullReasoning) {
+      lastApiMessages.push({
+        role: 'assistant',
+        content: fullContent || null,
+        reasoning: fullReasoning || null,
+      });
+    }
+    break;
+  }
+
+  yield { type: 'done' };
+}
+
+export async function* streamChat(
+  provider: AIProvider,
+  messages: ChatMessage[],
+  context?: StreamChatContext,
+  config?: FunctionCallingConfig,
+  retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG,
+  previousApiMessages?: ApiMessage[],
+): AsyncGenerator<StreamEvent, void, unknown> {
+  if (shouldUseResponsesMode(provider)) {
+    try {
+      yield* streamChatWithResponses(provider, messages, context, config, retryConfig, previousApiMessages);
+      return;
+    } catch (error) {
+      const parsedError = parseError(error);
+      if (provider.apiMode !== 'auto' || !shouldFallbackToChatCompletions(parsedError)) {
+        throw parsedError;
+      }
+      console.warn('[streamChat] Responses 模式失败，已自动回退到 chat.completions:', parsedError.message);
+    }
+  }
+
+  yield* streamChatWithChatCompletions(provider, messages, context, config, retryConfig, previousApiMessages);
 }
 
 // 简化版本的流式聊天（向后兼容，不使用工具）
