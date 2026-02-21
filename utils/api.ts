@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
 import type { ChatMessage } from './db';
 import {
+  DEFAULT_SYSTEM_PROMPT_TEMPLATE,
   getDefaultReasoningEffortForModel,
   getReasoningEffortsForModel,
   isVisionSupportedForModel,
@@ -394,7 +395,15 @@ function convertMessageContentToResponsesInput(content: ApiMessageContent): stri
   return parts;
 }
 
-export function buildResponsesInput(messages: ApiMessage[]): Array<Record<string, unknown>> {
+export interface BuildResponsesInputOptions {
+  includeSystemMessage?: boolean;
+}
+
+export function buildResponsesInput(
+  messages: ApiMessage[],
+  options: BuildResponsesInputOptions = {},
+): Array<Record<string, unknown>> {
+  const includeSystemMessage = options.includeSystemMessage !== false;
   const items: Array<Record<string, unknown>> = [];
   const seenToolCallIds = new Set<string>();
 
@@ -449,6 +458,10 @@ export function buildResponsesInput(messages: ApiMessage[]): Array<Record<string
     }
 
     if (message.role !== 'system' && message.role !== 'user' && message.role !== 'assistant') {
+      continue;
+    }
+
+    if (message.role === 'system' && !includeSystemMessage) {
       continue;
     }
 
@@ -674,6 +687,40 @@ function sanitizeMessagesForVision(messages: ApiMessage[], allowImages: boolean)
   });
 }
 
+export function buildSystemMessage(provider: Pick<AIProvider, 'systemPromptTemplate'>, contextPrompt?: string): string {
+  const rawTemplate = typeof provider.systemPromptTemplate === 'string'
+    ? provider.systemPromptTemplate.trim()
+    : '';
+  const systemTemplate = rawTemplate || DEFAULT_SYSTEM_PROMPT_TEMPLATE;
+  const normalizedContext = typeof contextPrompt === 'string' ? contextPrompt.trim() : '';
+  if (!normalizedContext) {
+    return systemTemplate;
+  }
+  return `${systemTemplate}\n\n${normalizedContext}`;
+}
+
+export function buildResponsesInstructions(systemMessage: string): string {
+  return systemMessage;
+}
+
+export interface ResponsesPromptInjectionPayload {
+  input: Array<Record<string, unknown>>;
+  instructions: string;
+}
+
+export function buildResponsesPromptInjectionPayload(
+  messages: ApiMessage[],
+  systemMessage: string,
+): ResponsesPromptInjectionPayload {
+  const instructions = buildResponsesInstructions(systemMessage);
+  return {
+    input: buildResponsesInput(messages, {
+      includeSystemMessage: false,
+    }),
+    instructions,
+  };
+}
+
 
 async function* streamChatWithChatCompletions(
   provider: AIProvider,
@@ -697,17 +744,9 @@ async function* streamChatWithChatCompletions(
   };
   
   const client = createClient(provider);
-  
-  const basePrompt = `You are a helpful AI assistant. Always respond using Markdown format for better readability. Use:
-- Headers (##, ###) for sections
-- **bold** and *italic* for emphasis
-- \`code\` for inline code and \`\`\` for code blocks with language specification
-- Lists (- or 1.) for enumerations
-- > for quotes
-- Tables when presenting structured data`;
 
   const contextPrompt = generateContextPrompt(context);
-  const systemMessage = `${basePrompt}\n\n${contextPrompt}`;
+  const systemMessage = buildSystemMessage(provider, contextPrompt);
 
   // 构建初始消息
   let apiMessages: ApiMessage[];
@@ -1127,16 +1166,8 @@ async function* streamChatWithResponses(
 
   const client = createClient(provider);
 
-  const basePrompt = `You are a helpful AI assistant. Always respond using Markdown format for better readability. Use:
-- Headers (##, ###) for sections
-- **bold** and *italic* for emphasis
-- \`code\` for inline code and \`\`\` for code blocks with language specification
-- Lists (- or 1.) for enumerations
-- > for quotes
-- Tables when presenting structured data`;
-
   const contextPrompt = generateContextPrompt(context);
-  const systemMessage = `${basePrompt}\n\n${contextPrompt}`;
+  const systemMessage = buildSystemMessage(provider, contextPrompt);
 
   let apiMessages: ApiMessage[];
   if (previousApiMessages && previousApiMessages.length > 0) {
@@ -1165,7 +1196,6 @@ async function* streamChatWithResponses(
 
   const tools = enableTools ? getFilteredTools(context) : [];
   const responseTools = tools.length > 0 ? convertToolsToResponses(tools) : undefined;
-
   let iteration = 0;
   let currentMessages = [...apiMessages];
   let toolCallRetryCount = 0;
@@ -1178,7 +1208,11 @@ async function* streamChatWithResponses(
     ensureNotAborted();
     iteration++;
 
-    const responseInput = buildResponsesInput(currentMessages);
+    const promptInjectionPayload = buildResponsesPromptInjectionPayload(
+      currentMessages,
+      systemMessage,
+    );
+    const responseInput = promptInjectionPayload.input;
 
     let stream: AsyncIterable<any> | undefined;
     let lastError: ApiError | null = null;
@@ -1198,6 +1232,9 @@ async function* streamChatWithResponses(
         }
         if (promptCacheKey) {
           requestBody.prompt_cache_key = promptCacheKey;
+        }
+        if (promptInjectionPayload.instructions) {
+          requestBody.instructions = promptInjectionPayload.instructions;
         }
         if (reasoningConfig) {
           requestBody.reasoning = {
@@ -1505,18 +1542,10 @@ export async function* streamChatSimple(
 ): AsyncGenerator<string, void, unknown> {
   const client = createClient(provider);
   const allowImages = isVisionSupportedForModel(provider, provider.selectedModel);
-  
-  const basePrompt = `You are a helpful AI assistant. Always respond using Markdown format for better readability. Use:
-- Headers (##, ###) for sections
-- **bold** and *italic* for emphasis
-- \`code\` for inline code and \`\`\` for code blocks with language specification
-- Lists (- or 1.) for enumerations
-- > for quotes
-- Tables when presenting structured data`;
-
-  const systemMessage = pageContent
-    ? `${basePrompt}\n\nThe user is viewing a webpage with the following content:\n\n${pageContent}\n\nAnswer questions based on this context when relevant.`
-    : basePrompt;
+  const pageContextPrompt = pageContent
+    ? `The user is viewing a webpage with the following content:\n\n${pageContent}\n\nAnswer questions based on this context when relevant.`
+    : '';
+  const systemMessage = buildSystemMessage(provider, pageContextPrompt);
 
   const apiMessages: ApiMessage[] = [
     { role: 'system', content: systemMessage },

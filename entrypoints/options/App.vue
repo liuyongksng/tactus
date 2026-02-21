@@ -24,6 +24,7 @@ import {
   getThemeMode,
   watchThemeMode,
   applyTheme,
+  DEFAULT_SYSTEM_PROMPT_TEMPLATE,
   getReasoningEffortsForModel,
   getDefaultReasoningEffortForModel,
   type AIProvider,
@@ -93,6 +94,7 @@ const formName = ref('');
 const formBaseUrl = ref('');
 const formApiKey = ref('');
 const formApiMode = ref<ProviderApiMode>('auto');
+const formSystemPromptTemplate = ref(DEFAULT_SYSTEM_PROMPT_TEMPLATE);
 const formModels = ref<string[]>([]);
 const formCustomModel = ref('');
 const formVisionModelSupport = ref<Record<string, boolean>>({});
@@ -201,6 +203,7 @@ function selectProvider(id: string) {
     formBaseUrl.value = provider.baseUrl;
     formApiKey.value = provider.apiKey;
     formApiMode.value = provider.apiMode || 'auto';
+    formSystemPromptTemplate.value = provider.systemPromptTemplate || DEFAULT_SYSTEM_PROMPT_TEMPLATE;
     formModels.value = Array.isArray(provider.models) ? [...provider.models] : [];
     formVisionModelSupport.value = { ...(provider.visionModelSupport || {}) };
     formCustomModel.value = '';
@@ -214,6 +217,7 @@ function addNewProvider() {
   formBaseUrl.value = '';
   formApiKey.value = '';
   formApiMode.value = 'auto';
+  formSystemPromptTemplate.value = DEFAULT_SYSTEM_PROMPT_TEMPLATE;
   formModels.value = [];
   formVisionModelSupport.value = {};
   formCustomModel.value = '';
@@ -282,12 +286,15 @@ async function saveCurrentProvider() {
       previousEffort && modelEfforts.includes(previousEffort)
         ? previousEffort
         : getDefaultReasoningEffortForModel(selectedModel);
+    const systemPromptTemplate = formSystemPromptTemplate.value.trim() || DEFAULT_SYSTEM_PROMPT_TEMPLATE;
     const provider: AIProvider = {
       id: isNewProvider.value ? crypto.randomUUID() : selectedProviderId.value!,
       name: formName.value,
       baseUrl: formBaseUrl.value,
       apiKey: formApiKey.value,
       apiMode: formApiMode.value,
+      systemPromptTemplate,
+      responsesSystemPromptMode: 'instructions',
       models: [...formModels.value],
       selectedModel,
       visionModelSupport: Object.fromEntries(
@@ -666,6 +673,16 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                     <option value="responses">{{ i18n('apiModeResponses') }}</option>
                   </select>
                   <p class="form-hint">{{ i18n('apiModeDesc') }}</p>
+                </div>
+                <div class="form-group">
+                  <label>{{ i18n('systemPrompt') }}</label>
+                  <textarea
+                    v-model="formSystemPromptTemplate"
+                    :placeholder="i18n('systemPromptPlaceholder')"
+                    rows="6"
+                  ></textarea>
+                  <p class="form-hint">{{ i18n('systemPromptDesc') }}</p>
+                  <p class="form-hint">{{ i18n('systemPromptHint') }}</p>
                 </div>
                 <div class="form-group">
                   <div class="label-row">

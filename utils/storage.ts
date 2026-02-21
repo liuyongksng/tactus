@@ -17,13 +17,24 @@ export interface AIProvider {
   selectedModel: string;
   visionModelSupport: Record<string, boolean>;
   apiMode: ProviderApiMode;
+  systemPromptTemplate: string;
+  responsesSystemPromptMode: ResponsesSystemPromptMode;
   responsesReasoningEffort: ResponsesReasoningEffort;
   responsesReasoningSummary: ResponsesReasoningSummary;
 }
 
 export type ProviderApiMode = 'auto' | 'chat_completions' | 'responses';
+export type ResponsesSystemPromptMode = 'instructions';
 export type ResponsesReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 export type ResponsesReasoningSummary = 'auto';
+
+export const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are a helpful AI assistant. Always respond using Markdown format for better readability. Use:
+- Headers (##, ###) for sections
+- **bold** and *italic* for emphasis
+- \`code\` for inline code and \`\`\` for code blocks with language specification
+- Lists (- or 1.) for enumerations
+- > for quotes
+- Tables when presenting structured data`;
 
 export interface TrustedScript {
   skillId: string;
@@ -382,6 +393,18 @@ function normalizeResponsesReasoningSummary(value: unknown): ResponsesReasoningS
   return value === 'auto' ? 'auto' : 'auto';
 }
 
+function normalizeSystemPromptTemplate(value: unknown): string {
+  if (typeof value !== 'string') {
+    return DEFAULT_SYSTEM_PROMPT_TEMPLATE;
+  }
+  const normalized = value.trim();
+  return normalized || DEFAULT_SYSTEM_PROMPT_TEMPLATE;
+}
+
+function normalizeResponsesSystemPromptMode(value: unknown): ResponsesSystemPromptMode {
+  return 'instructions';
+}
+
 function normalizeVisionModelSupport(
   models: string[],
   provider: LegacyProvider,
@@ -409,6 +432,8 @@ function normalizeProvider(provider: AIProvider): AIProvider {
       : models[0] || '';
   const visionModelSupport = normalizeVisionModelSupport(models, legacyProvider);
   const apiMode = normalizeApiMode(legacyProvider.apiMode);
+  const systemPromptTemplate = normalizeSystemPromptTemplate(legacyProvider.systemPromptTemplate);
+  const responsesSystemPromptMode = normalizeResponsesSystemPromptMode(legacyProvider.responsesSystemPromptMode);
   const responsesReasoningEffort = normalizeResponsesReasoningEffort(
     legacyProvider.responsesReasoningEffort,
     selectedModel,
@@ -424,6 +449,8 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     selectedModel,
     visionModelSupport,
     apiMode,
+    systemPromptTemplate,
+    responsesSystemPromptMode,
     responsesReasoningEffort,
     responsesReasoningSummary,
   };

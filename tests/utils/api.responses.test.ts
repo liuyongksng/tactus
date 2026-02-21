@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildResponsesReasoning,
+  buildResponsesInstructions,
+  buildResponsesPromptInjectionPayload,
+  buildSystemMessage,
   buildResponsesInput,
   buildSessionHeaders,
   parseResponsesStreamEvent,
   type ApiMessage,
 } from '../../utils/api';
-import type { AIProvider } from '../../utils/storage';
+import { DEFAULT_SYSTEM_PROMPT_TEMPLATE, type AIProvider } from '../../utils/storage';
 
 describe('buildResponsesInput', () => {
   it('应正确转换用户多模态消息、工具调用与工具输出', () => {
@@ -82,6 +85,22 @@ describe('buildResponsesInput', () => {
     const input = buildResponsesInput(messages);
     expect(input).toEqual([]);
   });
+
+  it('应在 includeSystemMessage=false 时跳过 system/developer 输入', () => {
+    const messages: ApiMessage[] = [
+      { role: 'system', content: 'system prompt' },
+      { role: 'user', content: 'hello' },
+    ];
+
+    const input = buildResponsesInput(messages, { includeSystemMessage: false });
+    expect(input).toEqual([
+      {
+        type: 'message',
+        role: 'user',
+        content: 'hello',
+      },
+    ]);
+  });
 });
 
 describe('buildSessionHeaders', () => {
@@ -156,6 +175,8 @@ describe('buildResponsesReasoning', () => {
       selectedModel: 'gpt-5.2',
       visionModelSupport: { 'gpt-5.2': false },
       apiMode: 'responses',
+      systemPromptTemplate: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+      responsesSystemPromptMode: 'instructions',
       responsesReasoningEffort: 'high',
       responsesReasoningSummary: 'auto',
       ...overrides,
@@ -190,6 +211,64 @@ describe('buildResponsesReasoning', () => {
       effort: 'high',
       summary: 'auto',
       downgradedFrom: 'xhigh',
+    });
+  });
+});
+
+describe('buildSystemMessage', () => {
+  it('应拼接自定义系统提示词与上下文提示', () => {
+    const provider = {
+      systemPromptTemplate: '你是一个专业助手，请先给结论。',
+    } as Pick<AIProvider, 'systemPromptTemplate'>;
+
+    expect(buildSystemMessage(provider, '当前页面标题：示例页面')).toBe(
+      '你是一个专业助手，请先给结论。\n\n当前页面标题：示例页面',
+    );
+  });
+
+  it('应在系统提示词为空时回退默认模板', () => {
+    const provider = {
+      systemPromptTemplate: '   ',
+    } as Pick<AIProvider, 'systemPromptTemplate'>;
+
+    expect(buildSystemMessage(provider, 'context info')).toBe(
+      `${DEFAULT_SYSTEM_PROMPT_TEMPLATE}\n\ncontext info`,
+    );
+  });
+
+  it('应在上下文为空时仅返回系统提示词', () => {
+    const provider = {
+      systemPromptTemplate: '请用中文回答',
+    } as Pick<AIProvider, 'systemPromptTemplate'>;
+
+    expect(buildSystemMessage(provider, '   ')).toBe('请用中文回答');
+  });
+});
+
+describe('buildResponsesInstructions', () => {
+  it('应返回系统提示词文本', () => {
+    expect(buildResponsesInstructions('system text')).toBe('system text');
+  });
+});
+
+describe('buildResponsesPromptInjectionPayload', () => {
+  it('应输出 instructions 并移除 input 中的 system', () => {
+    const messages: ApiMessage[] = [
+      { role: 'system', content: 'system prompt' },
+      { role: 'user', content: 'hello' },
+    ];
+
+    expect(
+      buildResponsesPromptInjectionPayload(messages, 'custom instructions'),
+    ).toEqual({
+      instructions: 'custom instructions',
+      input: [
+        {
+          type: 'message',
+          role: 'user',
+          content: 'hello',
+        },
+      ],
     });
   });
 });

@@ -37,6 +37,10 @@ export interface Translations {
   apiModeAuto: string;
   apiModeChatCompletions: string;
   apiModeResponses: string;
+  systemPrompt: string;
+  systemPromptDesc: string;
+  systemPromptPlaceholder: string;
+  systemPromptHint: string;
   modelList: string;
   fetchModels: string;
   fetchingModels: string;
@@ -236,6 +240,10 @@ const en: Translations = {
   apiModeAuto: 'Auto (recommended)',
   apiModeChatCompletions: 'Chat Completions',
   apiModeResponses: 'Responses',
+  systemPrompt: 'System Prompt',
+  systemPromptDesc: 'Customize assistant behavior for this provider. This applies to both Chat Completions and Responses.',
+  systemPromptPlaceholder: 'Enter system instructions for this provider...',
+  systemPromptHint: 'If left blank, the default prompt template will be used automatically.',
   modelList: 'Models',
   fetchModels: 'Fetch Models',
   fetchingModels: 'Fetching...',
@@ -435,6 +443,10 @@ const zhCN: Translations = {
   apiModeAuto: '自动（推荐）',
   apiModeChatCompletions: 'Chat Completions',
   apiModeResponses: 'Responses',
+  systemPrompt: '系统提示词',
+  systemPromptDesc: '用于定义该服务商的助手行为，会同时作用于 Chat Completions 和 Responses。',
+  systemPromptPlaceholder: '输入该服务商的系统指令...',
+  systemPromptHint: '留空会自动回退到默认系统提示词。',
   modelList: '模型列表',
   fetchModels: '获取可用模型',
   fetchingModels: '获取中...',
