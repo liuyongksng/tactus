@@ -671,7 +671,7 @@ export function t(lang: Language, key: keyof Translations, params?: Record<strin
   // 替换参数
   if (params) {
     Object.entries(params).forEach(([k, v]) => {
-      text = text.replace(`{${k}}`, String(v));
+      text = text.split(`{${k}}`).join(String(v));
     });
   }
   

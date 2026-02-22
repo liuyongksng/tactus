@@ -10,12 +10,14 @@ interface MockState {
   initialized: boolean;
   stores: Map<string, MockStore>;
   clearError: Error | null;
+  upgradeRuns: number;
 }
 
 const mockState: MockState = {
   initialized: false,
   stores: new Map(),
   clearError: null,
+  upgradeRuns: 0,
 };
 
 function normalizeKey(key: unknown): string {
@@ -138,38 +140,54 @@ vi.mock('idb', () => {
     openDB: async (_name: string, _version: number, options?: { upgrade?: (db: typeof mockDb) => void }) => {
       if (!mockState.initialized) {
         mockState.initialized = true;
+        mockState.upgradeRuns += 1;
         options?.upgrade?.(mockDb);
       }
       return mockDb;
     },
     __resetMockData: () => {
-      for (const store of mockState.stores.values()) {
-        store.records.clear();
-      }
+      mockState.initialized = false;
+      mockState.stores = new Map();
       mockState.clearError = null;
     },
     __setClearErrorOnce: (message: string) => {
       mockState.clearError = new Error(message);
     },
+    __getUpgradeRunCount: () => mockState.upgradeRuns,
   };
 });
 
 import {
+  __resetDbForTests,
   createSession,
   deleteAllSessions,
+  deleteSession,
   deleteSkill,
   getAllSessions,
   getCurrentSession,
+  getSession,
+  getSessionsPaginated,
   getSkill,
   saveSkill,
+  setCurrentSessionId,
+  updateSession,
 } from '../../utils/db';
+
+interface IdbMockHooks {
+  __resetMockData: () => void;
+  __setClearErrorOnce: (message: string) => void;
+  __getUpgradeRunCount: () => number;
+}
+
+async function resetDbAndMocks(): Promise<void> {
+  const idbMock = (await import('idb')) as unknown as IdbMockHooks;
+  idbMock.__resetMockData();
+  __resetDbForTests();
+}
 
 describe('deleteAllSessions', () => {
   beforeEach(async () => {
-    const idbMock = await import('idb') as unknown as {
-      __resetMockData: () => void;
-    };
-    idbMock.__resetMockData();
+    await resetDbAndMocks();
     await deleteAllSessions();
   });
 
@@ -194,9 +212,7 @@ describe('deleteAllSessions', () => {
 
   it('应在数据库清空失败时抛出错误并保留原有会话', async () => {
     await createSession('provider-3');
-    const idbMock = await import('idb') as unknown as {
-      __setClearErrorOnce: (message: string) => void;
-    };
+    const idbMock = (await import('idb')) as unknown as IdbMockHooks;
     idbMock.__setClearErrorOnce('mock clear failed');
 
     await expect(deleteAllSessions()).rejects.toThrow('mock clear failed');
@@ -207,10 +223,7 @@ describe('deleteAllSessions', () => {
 
 describe('deleteSkill', () => {
   beforeEach(async () => {
-    const idbMock = await import('idb') as unknown as {
-      __resetMockData: () => void;
-    };
-    idbMock.__resetMockData();
+    await resetDbAndMocks();
   });
 
   it('应在 trustedScripts 清理失败时终止删除并保留 skill 数据', async () => {
@@ -245,5 +258,104 @@ describe('deleteSkill', () => {
     }
 
     expect(await getSkill(skillId)).not.toBeNull();
+  });
+});
+
+describe('chatSessions CRUD 与分页', () => {
+  beforeEach(async () => {
+    await resetDbAndMocks();
+    await deleteAllSessions();
+  });
+
+  it('createSession 应创建会话并把当前会话切到最新会话', async () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    nowSpy
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(2000)
+      .mockReturnValueOnce(2000);
+
+    const first = await createSession('provider-a');
+    const second = await createSession('provider-b');
+    nowSpy.mockRestore();
+
+    const current = await getCurrentSession();
+    const sessions = await getAllSessions();
+
+    expect(current?.id).toBe(second.id);
+    expect(sessions.map(session => session.id)).toEqual([second.id, first.id]);
+  });
+
+  it('updateSession 应更新消息内容并刷新 updatedAt', async () => {
+    const session = await createSession('provider-x');
+    const updatedAtBefore = session.updatedAt;
+
+    session.messages.push({
+      role: 'user',
+      content: 'hello',
+      timestamp: 123,
+    });
+
+    await updateSession(session);
+    const stored = await getSession(session.id);
+
+    expect(stored?.messages).toHaveLength(1);
+    expect(stored?.messages[0].content).toBe('hello');
+    expect((stored?.updatedAt ?? 0) >= updatedAtBefore).toBe(true);
+  });
+
+  it('getSessionsPaginated 应按更新时间倒序分页', async () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    nowSpy
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(1000)
+      .mockReturnValueOnce(2000)
+      .mockReturnValueOnce(2000)
+      .mockReturnValueOnce(3000)
+      .mockReturnValueOnce(3000);
+
+    const s1 = await createSession('provider-1');
+    const s2 = await createSession('provider-2');
+    const s3 = await createSession('provider-3');
+    nowSpy.mockRestore();
+
+    const firstPage = await getSessionsPaginated(2, 0);
+    const secondPage = await getSessionsPaginated(2, 2);
+
+    expect(firstPage.sessions.map(session => session.id)).toEqual([s3.id, s2.id]);
+    expect(firstPage.hasMore).toBe(true);
+    expect(secondPage.sessions.map(session => session.id)).toEqual([s1.id]);
+    expect(secondPage.hasMore).toBe(false);
+  });
+
+  it('deleteSession 删除当前会话后应自动切换到剩余最新会话', async () => {
+    const s1 = await createSession('provider-1');
+    const s2 = await createSession('provider-2');
+    await setCurrentSessionId(s1.id);
+
+    await deleteSession(s1.id);
+    const current = await getCurrentSession();
+
+    expect(current?.id).toBe(s2.id);
+  });
+});
+
+describe('idb mock reset', () => {
+  beforeEach(async () => {
+    await resetDbAndMocks();
+  });
+
+  it('重置后应可再次触发 upgrade/schema 初始化', async () => {
+    const idbMock = (await import('idb')) as unknown as IdbMockHooks;
+    const startUpgradeRuns = idbMock.__getUpgradeRunCount();
+
+    await createSession('provider-first');
+    const firstUpgradeRuns = idbMock.__getUpgradeRunCount();
+    expect(firstUpgradeRuns).toBe(startUpgradeRuns + 1);
+
+    await resetDbAndMocks();
+    await createSession('provider-second');
+    const secondUpgradeRuns = idbMock.__getUpgradeRunCount();
+    expect(secondUpgradeRuns).toBe(firstUpgradeRuns + 1);
   });
 });

@@ -258,10 +258,15 @@ export async function setRawExtractSites(sites: string[]): Promise<void> {
   await rawExtractSitesStorage.setValue(sites);
 }
 
+function normalizeRawExtractSite(site: string): string {
+  return site.toLowerCase().trim();
+}
+
 export async function addRawExtractSite(site: string): Promise<void> {
   const sites = await rawExtractSitesStorage.getValue();
-  const normalized = site.toLowerCase().trim();
-  if (normalized && !sites.includes(normalized)) {
+  const normalized = normalizeRawExtractSite(site);
+  const existed = sites.some(existing => normalizeRawExtractSite(existing) === normalized);
+  if (normalized && !existed) {
     sites.push(normalized);
     await rawExtractSitesStorage.setValue(sites);
   }
@@ -269,7 +274,11 @@ export async function addRawExtractSite(site: string): Promise<void> {
 
 export async function removeRawExtractSite(site: string): Promise<void> {
   const sites = await rawExtractSitesStorage.getValue();
-  await rawExtractSitesStorage.setValue(sites.filter(s => s !== site));
+  const normalized = normalizeRawExtractSite(site);
+  if (!normalized) return;
+  await rawExtractSitesStorage.setValue(
+    sites.filter(existing => normalizeRawExtractSite(existing) !== normalized),
+  );
 }
 
 export function watchRawExtractSites(callback: (sites: string[]) => void): () => void {

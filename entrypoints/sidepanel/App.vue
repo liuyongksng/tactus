@@ -147,28 +147,65 @@ function getLatestApiMessagesForSession(sessionId: string): ApiMessage[] {
   return [];
 }
 
-// 思维链折叠状态（按消息索引存储）
-const reasoningExpanded = ref<Record<number, boolean>>({});
-
-// 切换思维链展开/折叠
-function toggleReasoning(idx: number) {
-  reasoningExpanded.value[idx] = !reasoningExpanded.value[idx];
-}
+// 思维链折叠状态（按稳定消息 key 存储）
+const reasoningExpanded = ref<Record<string, boolean>>({});
 
 // 编辑和复制状态
 const editingMessageIndex = ref<number | null>(null);
 const editingContent = ref<string>('');
 const editingQuote = ref<string | null>(null);
-const copiedMessageIndex = ref<number | null>(null);
+const copiedMessageKey = ref<string | null>(null);
 
-// 复制按钮位置状态（按消息索引存储：'top' | 'bottom'）
-const copyButtonPosition = ref<Record<number, 'top' | 'bottom'>>({});
+// 复制按钮位置状态（按稳定消息 key 存储：'top' | 'bottom'）
+const copyButtonPosition = ref<Record<string, 'top' | 'bottom'>>({});
+
+const messageRenderKeyMap = new WeakMap<ChatMessage, string>();
+let messageRenderKeySeed = 0;
+
+function getMessageRenderKey(message: ChatMessage, idx: number): string {
+  const existing = messageRenderKeyMap.get(message);
+  if (existing) return existing;
+
+  const timestamp = Number.isFinite(message.timestamp) ? message.timestamp : Date.now();
+  const generated = `msg-${timestamp}-${messageRenderKeySeed++}-${idx}`;
+  messageRenderKeyMap.set(message, generated);
+  return generated;
+}
+
+function getLiveMessageKeySet(): Set<string> {
+  const keys = new Set<string>();
+  messages.value.forEach((message, idx) => {
+    keys.add(getMessageRenderKey(message, idx));
+  });
+  return keys;
+}
+
+function pruneMessageUiStates(): void {
+  const liveKeys = getLiveMessageKeySet();
+
+  reasoningExpanded.value = Object.fromEntries(
+    Object.entries(reasoningExpanded.value).filter(([key]) => liveKeys.has(key)),
+  );
+  copyButtonPosition.value = Object.fromEntries(
+    Object.entries(copyButtonPosition.value).filter(([key]) => liveKeys.has(key)),
+  );
+  if (copiedMessageKey.value && !liveKeys.has(copiedMessageKey.value)) {
+    copiedMessageKey.value = null;
+  }
+}
+
+let lastMessageArrayRef: ChatMessage[] = messages.value;
+let lastMessageCount = messages.value.length;
+
+function toggleReasoning(messageKey: string): void {
+  reasoningExpanded.value[messageKey] = !reasoningExpanded.value[messageKey];
+}
 
 // 计算属性
 const isEditing = computed(() => editingMessageIndex.value !== null);
 
 // 复制消息（仅 AI 回复）
-async function copyMessage(index: number): Promise<void> {
+async function copyMessage(index: number, messageKey: string): Promise<void> {
   const message = messages.value[index];
   if (!message.content || message.role !== 'assistant') return;
   
@@ -176,23 +213,23 @@ async function copyMessage(index: number): Promise<void> {
     await navigator.clipboard.writeText(message.content);
     
     // 显示已复制状态
-    copiedMessageIndex.value = index;
+    copiedMessageKey.value = messageKey;
     
     // 2 秒后恢复
     setTimeout(() => {
-      if (copiedMessageIndex.value === index) {
-        copiedMessageIndex.value = null;
+      if (copiedMessageKey.value === messageKey) {
+        copiedMessageKey.value = null;
       }
     }, 2000);
   } catch (error) {
     console.error('Failed to copy:', error);
     // 降级方案
-    copyMessageFallback(message.content);
+    copyMessageFallback(message.content, messageKey);
   }
 }
 
 // 处理消息鼠标移动，检测复制按钮应该显示在顶部还是底部
-function handleMessageMouseMove(event: MouseEvent, index: number): void {
+function handleMessageMouseMove(event: MouseEvent, messageKey: string): void {
   const target = event.currentTarget as HTMLElement;
   if (!target) return;
   
@@ -201,11 +238,11 @@ function handleMessageMouseMove(event: MouseEvent, index: number): void {
   const middleY = rect.top + rect.height / 2;
   
   // 鼠标在消息上半部分显示顶部按钮，下半部分显示底部按钮
-  copyButtonPosition.value[index] = mouseY < middleY ? 'top' : 'bottom';
+  copyButtonPosition.value[messageKey] = mouseY < middleY ? 'top' : 'bottom';
 }
 
 // 复制降级方案
-function copyMessageFallback(content: string): void {
+function copyMessageFallback(content: string, messageKey: string): void {
   const textarea = document.createElement('textarea');
   textarea.value = content;
   textarea.style.position = 'fixed';
@@ -215,9 +252,11 @@ function copyMessageFallback(content: string): void {
   textarea.select();
   try {
     document.execCommand('copy');
-    copiedMessageIndex.value = -1; // 使用 -1 表示降级方案成功
+    copiedMessageKey.value = messageKey;
     setTimeout(() => {
-      copiedMessageIndex.value = null;
+      if (copiedMessageKey.value === messageKey) {
+        copiedMessageKey.value = null;
+      }
     }, 2000);
   } catch (error) {
     alert('复制失败');
@@ -474,6 +513,23 @@ async function regenerateResponse(): Promise<void> {
     await saveCurrentSession();
   }
 }
+
+watch(
+  messages,
+  (nextMessages) => {
+    const arrayReplaced = nextMessages !== lastMessageArrayRef;
+    const countChanged = nextMessages.length !== lastMessageCount;
+
+    // 仅在消息结构发生变化（新增/删除/整体替换）时清理 UI 状态，避免流式分片高频触发。
+    if (arrayReplaced || countChanged) {
+      pruneMessageUiStates();
+    }
+
+    lastMessageArrayRef = nextMessages;
+    lastMessageCount = nextMessages.length;
+  },
+  { deep: false },
+);
 
 // Skills state
 const installedSkills = ref<Skill[]>([]);
@@ -1914,7 +1970,7 @@ function rejectScript() {
         </p>
       </div>
 
-      <template v-for="(msg, idx) in messages" :key="idx">
+      <template v-for="(msg, idx) in messages" :key="getMessageRenderKey(msg, idx)">
         <!-- 在最后一条 assistant 消息上方显示 loading 状态 -->
         <div 
           v-if="isLoading && msg.role === 'assistant' && idx === messages.length - 1" 
@@ -1932,7 +1988,7 @@ function rejectScript() {
         <div 
           class="message" 
           :class="msg.role"
-          @mousemove="msg.role === 'assistant' ? handleMessageMouseMove($event, idx) : undefined"
+          @mousemove="msg.role === 'assistant' ? handleMessageMouseMove($event, getMessageRenderKey(msg, idx)) : undefined"
         >
           <div v-if="msg.content || msg.reasoning || msg.images?.length" class="message-time">{{ formatTime(msg.timestamp) }}</div>
           
@@ -1971,7 +2027,7 @@ function rejectScript() {
             <div v-if="msg.quote" class="quote">"{{ msg.quote }}"</div>
             
             <!-- 消息操作按钮（顶部悬浮） -->
-            <div class="message-actions" :class="{ 'force-hide': msg.role === 'assistant' && copyButtonPosition[idx] === 'bottom' }">
+            <div class="message-actions" :class="{ 'force-hide': msg.role === 'assistant' && copyButtonPosition[getMessageRenderKey(msg, idx)] === 'bottom' }">
               <!-- 编辑按钮（仅用户消息） -->
               <button 
                 v-if="msg.role === 'user' && !isEditing"
@@ -1987,13 +2043,13 @@ function rejectScript() {
               
               <!-- AI 消息顶部复制按钮 -->
               <button 
-                v-if="msg.role === 'assistant' && msg.content && copyButtonPosition[idx] !== 'bottom'"
+                v-if="msg.role === 'assistant' && msg.content && copyButtonPosition[getMessageRenderKey(msg, idx)] !== 'bottom'"
                 class="message-action-btn copy-btn"
-                @click="copyMessage(idx)"
-                :title="copiedMessageIndex === idx ? i18n('copied') : i18n('copyMessage')"
-                :class="{ copied: copiedMessageIndex === idx }"
+                @click="copyMessage(idx, getMessageRenderKey(msg, idx))"
+                :title="copiedMessageKey === getMessageRenderKey(msg, idx) ? i18n('copied') : i18n('copyMessage')"
+                :class="{ copied: copiedMessageKey === getMessageRenderKey(msg, idx) }"
               >
-                <svg v-if="copiedMessageIndex !== idx" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg v-if="copiedMessageKey !== getMessageRenderKey(msg, idx)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                   <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
                 </svg>
@@ -2007,8 +2063,8 @@ function rejectScript() {
             <div v-if="msg.reasoning" class="reasoning-section">
               <button 
                 class="reasoning-toggle"
-                @click="toggleReasoning(idx)"
-                :class="{ expanded: reasoningExpanded[idx] }"
+                @click="toggleReasoning(getMessageRenderKey(msg, idx))"
+                :class="{ expanded: reasoningExpanded[getMessageRenderKey(msg, idx)] }"
               >
                 <svg class="reasoning-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
@@ -2018,7 +2074,7 @@ function rejectScript() {
                   <path d="M6 9l6 6 6-6"/>
                 </svg>
               </button>
-              <div v-if="reasoningExpanded[idx]" class="reasoning-content">
+              <div v-if="reasoningExpanded[getMessageRenderKey(msg, idx)]" class="reasoning-content">
                 <div class="reasoning-text" v-html="renderMarkdown(msg.reasoning)"></div>
               </div>
             </div>
@@ -2033,14 +2089,14 @@ function rejectScript() {
             <div v-else-if="msg.content" v-html="msg.content.replace(/\n/g, '<br>')"></div>
             
             <!-- AI 消息底部复制按钮（悬浮显示，仅当鼠标在下半部分时） -->
-            <div v-if="msg.role === 'assistant' && msg.content && copyButtonPosition[idx] === 'bottom'" class="message-actions-bottom">
+            <div v-if="msg.role === 'assistant' && msg.content && copyButtonPosition[getMessageRenderKey(msg, idx)] === 'bottom'" class="message-actions-bottom">
               <button 
                 class="message-action-btn copy-btn"
-                @click="copyMessage(idx)"
-                :title="copiedMessageIndex === idx ? i18n('copied') : i18n('copyMessage')"
-                :class="{ copied: copiedMessageIndex === idx }"
+                @click="copyMessage(idx, getMessageRenderKey(msg, idx))"
+                :title="copiedMessageKey === getMessageRenderKey(msg, idx) ? i18n('copied') : i18n('copyMessage')"
+                :class="{ copied: copiedMessageKey === getMessageRenderKey(msg, idx) }"
               >
-                <svg v-if="copiedMessageIndex !== idx" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg v-if="copiedMessageKey !== getMessageRenderKey(msg, idx)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
                   <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
                 </svg>

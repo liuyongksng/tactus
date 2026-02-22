@@ -178,6 +178,10 @@ const DB_VERSION = 1;
 
 let dbInstance: IDBPDatabase<AppDBSchema> | null = null;
 
+export function __resetDbForTests(): void {
+  dbInstance = null;
+}
+
 // 获取数据库实例
 export async function getDB(): Promise<IDBPDatabase<AppDBSchema>> {
   if (dbInstance) return dbInstance;
