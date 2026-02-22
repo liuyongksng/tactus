@@ -270,4 +270,61 @@ describe('streamChat 主链路', () => {
     expect(serialized.includes('call-failed')).toBe(false);
     expect(serialized.includes('call-success')).toBe(true);
   });
+
+  it('PDF 边界提示作为成功工具结果时不应触发失败重试', async () => {
+    const openaiMock = (await import('openai')) as unknown as OpenAIMockHooks;
+
+    openaiMock.__queueChatCreate(async () =>
+      fromChunks([
+        {
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call-pdf-note',
+                    function: { name: 'extract_page_content', arguments: '{}' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ]),
+    );
+    openaiMock.__queueChatCreate(async () =>
+      fromChunks([
+        {
+          choices: [{ delta: { content: '已知该 PDF 为扫描件，建议 OCR。' } }],
+        },
+      ]),
+    );
+
+    let executorRuns = 0;
+    const events = await collectEvents(
+      streamChat(
+        createProvider({ apiMode: 'chat_completions' }),
+        [createUserMessage('读取这个 PDF')],
+        undefined,
+        {
+          enableTools: true,
+          toolExecutor: async toolCall => {
+            executorRuns += 1;
+            return {
+              tool_call_id: toolCall.id,
+              name: toolCall.name,
+              result: '未检测到可提取的文本层，当前 PDF 可能是扫描版。',
+              success: true,
+            };
+          },
+        },
+        RETRY_CONFIG,
+      ),
+    );
+
+    expect(executorRuns).toBe(1);
+    expect(events.some(event => event.type === 'thinking' && event.message.includes('工具执行失败'))).toBe(false);
+    expect(events.some(event => event.type === 'content' && event.content.includes('建议 OCR'))).toBe(true);
+  });
 });

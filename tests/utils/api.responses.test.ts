@@ -90,6 +90,45 @@ describe('buildResponsesInput', () => {
     expect(input).toEqual([]);
   });
 
+  it('应保留 PDF 提取边界提示文本作为 function_call_output', () => {
+    const messages: ApiMessage[] = [
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'call_pdf_001',
+            type: 'function',
+            function: {
+              name: 'extract_page_content',
+              arguments: '{}',
+            },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'call_pdf_001',
+        content: '未检测到可提取的文本层，当前 PDF 可能是扫描版。',
+      },
+    ];
+
+    const input = buildResponsesInput(messages);
+    expect(input).toEqual([
+      {
+        type: 'function_call',
+        call_id: 'call_pdf_001',
+        name: 'extract_page_content',
+        arguments: '{}',
+      },
+      {
+        type: 'function_call_output',
+        call_id: 'call_pdf_001',
+        output: '未检测到可提取的文本层，当前 PDF 可能是扫描版。',
+      },
+    ]);
+  });
+
   it('应在 includeSystemMessage=false 时跳过 system/developer 输入', () => {
     const messages: ApiMessage[] = [
       { role: 'system', content: 'system prompt' },

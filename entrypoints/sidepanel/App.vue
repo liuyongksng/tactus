@@ -53,6 +53,7 @@ import {
 } from '../../utils/db';
 import { streamChat, getLastApiMessages, setLastApiMessages, ApiError, type ToolExecutor, type ApiMessage } from '../../utils/api';
 import { extractPageContent, truncateContent } from '../../utils/pageExtractor';
+import { extractPdfContent, isPdfUrl } from '../../utils/pdfExtractor';
 import { getToolStatusText, isMcpTool, parseMcpToolName, type ToolCall, type ToolResult, type SkillInfo } from '../../utils/tools';
 import { getAllSkills, getSkillByName, getSkillFileAsText, type Skill } from '../../utils/skills';
 import { executeScript, setScriptConfirmCallback, type ScriptConfirmationRequest } from '../../utils/skillsExecutor';
@@ -1291,6 +1292,22 @@ async function extractCleanPageContent(): Promise<string> {
       return '无法获取当前页面信息';
     }
 
+    if (isPdfUrl(tab.url)) {
+      const extracted = await extractPdfContent(tab.url);
+      const content = truncateContent(extracted.content, maxPageContentLength.value);
+      const metadata = [
+        `# ${extracted.title || tab.title || 'PDF 文档'}`,
+        `URL: ${extracted.url}`,
+        extracted.note ? `提示: ${extracted.note}` : '',
+        extracted.fromCache ? '缓存: 已命中最近解析结果' : '',
+        '',
+        '---',
+        '',
+        content,
+      ].filter(Boolean).join('\n');
+      return metadata;
+    }
+
     const results = await browser.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
@@ -1306,6 +1323,22 @@ async function extractCleanPageContent(): Promise<string> {
     const pageData = results[0]?.result;
     if (!pageData) {
       return '无法获取页面内容';
+    }
+
+    if (typeof pageData.url === 'string' && isPdfUrl(pageData.url)) {
+      const extracted = await extractPdfContent(pageData.url);
+      const content = truncateContent(extracted.content, maxPageContentLength.value);
+      const metadata = [
+        `# ${extracted.title || pageData.title || 'PDF 文档'}`,
+        `URL: ${extracted.url}`,
+        extracted.note ? `提示: ${extracted.note}` : '',
+        extracted.fromCache ? '缓存: 已命中最近解析结果' : '',
+        '',
+        '---',
+        '',
+        content,
+      ].filter(Boolean).join('\n');
+      return metadata;
     }
 
     // 在这里解析 HTML（sidepanel 环境中）
