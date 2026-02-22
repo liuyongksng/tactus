@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, shallowRef, triggerRef, onMounted, onUnmounted, nextTick, watch, computed } from 'vue';
-import { marked } from 'marked';
 import {
   getAllProviders,
   getProvider,
@@ -60,17 +59,12 @@ import { executeScript, setScriptConfirmCallback, type ScriptConfirmationRequest
 import { t, type Translations } from '../../utils/i18n';
 import { mcpManager, type McpTool } from '../../utils/mcp';
 import { getEnabledMcpServers, watchMcpServers } from '../../utils/mcpStorage';
-
-// Configure marked for safe rendering
-marked.setOptions({
-  breaks: true,
-  gfm: true,
-});
+import { extractFormulaText } from '../../utils/formulaCopy';
+import { renderMarkdownWithMath } from '../../utils/markdownMath';
 
 // Render markdown to HTML
 function renderMarkdown(content: string): string {
-  if (!content) return '';
-  return marked.parse(content) as string;
+  return renderMarkdownWithMath(content);
 }
 
 // Language state
@@ -84,6 +78,10 @@ const showThemeSelector = ref(false);
 const i18n = (key: keyof Translations, params?: Record<string, string | number>) => {
   return t(currentLanguage.value, key, params);
 };
+
+function showCopyFailedAlert(): void {
+  alert(i18n('copyFailed'));
+}
 
 // State
 const messages = shallowRef<ChatMessage[]>([]);
@@ -117,6 +115,13 @@ const selectionQuotePopup = ref({
   y: 0,
   text: '',
 });
+const formulaContextMenu = ref({
+  visible: false,
+  x: 0,
+  y: 0,
+  latex: '',
+});
+const formulaContextMenuRef = ref<HTMLElement | null>(null);
 const chatAbortController = ref<AbortController | null>(null);
 
 // Session state
@@ -156,9 +161,6 @@ const editingContent = ref<string>('');
 const editingQuote = ref<string | null>(null);
 const copiedMessageKey = ref<string | null>(null);
 
-// 复制按钮位置状态（按稳定消息 key 存储：'top' | 'bottom'）
-const copyButtonPosition = ref<Record<string, 'top' | 'bottom'>>({});
-
 const messageRenderKeyMap = new WeakMap<ChatMessage, string>();
 let messageRenderKeySeed = 0;
 
@@ -185,9 +187,6 @@ function pruneMessageUiStates(): void {
 
   reasoningExpanded.value = Object.fromEntries(
     Object.entries(reasoningExpanded.value).filter(([key]) => liveKeys.has(key)),
-  );
-  copyButtonPosition.value = Object.fromEntries(
-    Object.entries(copyButtonPosition.value).filter(([key]) => liveKeys.has(key)),
   );
   if (copiedMessageKey.value && !liveKeys.has(copiedMessageKey.value)) {
     copiedMessageKey.value = null;
@@ -228,19 +227,6 @@ async function copyMessage(index: number, messageKey: string): Promise<void> {
   }
 }
 
-// 处理消息鼠标移动，检测复制按钮应该显示在顶部还是底部
-function handleMessageMouseMove(event: MouseEvent, messageKey: string): void {
-  const target = event.currentTarget as HTMLElement;
-  if (!target) return;
-  
-  const rect = target.getBoundingClientRect();
-  const mouseY = event.clientY;
-  const middleY = rect.top + rect.height / 2;
-  
-  // 鼠标在消息上半部分显示顶部按钮，下半部分显示底部按钮
-  copyButtonPosition.value[messageKey] = mouseY < middleY ? 'top' : 'bottom';
-}
-
 // 复制降级方案
 function copyMessageFallback(content: string, messageKey: string): void {
   const textarea = document.createElement('textarea');
@@ -251,7 +237,11 @@ function copyMessageFallback(content: string, messageKey: string): void {
   
   textarea.select();
   try {
-    document.execCommand('copy');
+    const copied = document.execCommand('copy');
+    if (!copied) {
+      showCopyFailedAlert();
+      return;
+    }
     copiedMessageKey.value = messageKey;
     setTimeout(() => {
       if (copiedMessageKey.value === messageKey) {
@@ -259,10 +249,118 @@ function copyMessageFallback(content: string, messageKey: string): void {
       }
     }, 2000);
   } catch (error) {
-    alert('复制失败');
+    showCopyFailedAlert();
   }
   
   document.body.removeChild(textarea);
+}
+
+function hideFormulaContextMenu(): void {
+  formulaContextMenu.value.visible = false;
+  formulaContextMenu.value.latex = '';
+}
+
+function getFormulaLatexFromTarget(target: EventTarget | null): string | null {
+  if (!(target instanceof Element)) return null;
+  if (!target.closest('.markdown-content, .reasoning-text')) return null;
+
+  const formulaRoot = target.closest('.katex, .katex-display');
+  if (!formulaRoot) return null;
+
+  const scopedFormulaRoot = formulaRoot.classList.contains('katex-display')
+    ? formulaRoot.querySelector('.katex') ?? formulaRoot
+    : formulaRoot;
+  const ariaLabel = formulaRoot.getAttribute('aria-label')
+    ?? scopedFormulaRoot.getAttribute('aria-label')
+    ?? scopedFormulaRoot.querySelector('[aria-label]')?.getAttribute('aria-label')
+    ?? null;
+
+  return extractFormulaText({
+    html: scopedFormulaRoot.innerHTML,
+    ariaLabel,
+    plainText: scopedFormulaRoot.textContent,
+  });
+}
+
+function openFormulaContextMenu(event: MouseEvent, latex: string): void {
+  const MENU_WIDTH = 160;
+  const MENU_HEIGHT = 44;
+  const MENU_PADDING = 8;
+  const maxX = Math.max(MENU_PADDING, window.innerWidth - MENU_WIDTH - MENU_PADDING);
+  const maxY = Math.max(MENU_PADDING, window.innerHeight - MENU_HEIGHT - MENU_PADDING);
+
+  formulaContextMenu.value = {
+    visible: true,
+    x: Math.min(Math.max(event.clientX, MENU_PADDING), maxX),
+    y: Math.min(Math.max(event.clientY, MENU_PADDING), maxY),
+    latex,
+  };
+}
+
+function handleFormulaContextMenu(event: MouseEvent): void {
+  const latex = getFormulaLatexFromTarget(event.target);
+  if (!latex) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  openFormulaContextMenu(event, latex);
+}
+
+function copyFormulaFallback(latex: string): boolean {
+  const textarea = document.createElement('textarea');
+  textarea.value = latex;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch (error) {
+    console.error('Failed to copy formula:', error);
+  }
+
+  document.body.removeChild(textarea);
+  if (!copied) {
+    showCopyFailedAlert();
+  }
+  return copied;
+}
+
+async function copyFormulaFromContextMenu(): Promise<void> {
+  const latex = formulaContextMenu.value.latex;
+  if (!latex) {
+    hideFormulaContextMenu();
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(latex);
+  } catch (error) {
+    console.error('Failed to copy formula via clipboard API:', error);
+    copyFormulaFallback(latex);
+  } finally {
+    hideFormulaContextMenu();
+  }
+}
+
+function handleFormulaMenuPointerDown(event: PointerEvent): void {
+  if (!formulaContextMenu.value.visible) return;
+  const targetNode = event.target as Node | null;
+  if (targetNode && formulaContextMenuRef.value?.contains(targetNode)) {
+    return;
+  }
+  hideFormulaContextMenu();
+}
+
+function handleFormulaMenuKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Escape') return;
+  hideFormulaContextMenu();
+}
+
+function handleFormulaMenuScroll(): void {
+  hideFormulaContextMenu();
 }
 
 // 编辑消息
@@ -896,6 +994,9 @@ let tabsActivatedListener: ((activeInfo: any) => void) | null = null;
 let tabsUpdatedListener: ((tabId: number, changeInfo: any, tab: any) => void) | null = null;
 let sidepanelSelectionMouseupHandler: ((event: MouseEvent) => void) | null = null;
 let sidepanelSelectionMousedownHandler: ((event: MouseEvent) => void) | null = null;
+let formulaMenuPointerdownHandler: ((event: PointerEvent) => void) | null = null;
+let formulaMenuKeydownHandler: ((event: KeyboardEvent) => void) | null = null;
+let formulaMenuScrollHandler: (() => void) | null = null;
 
 onMounted(async () => {
   providers.value = await getAllProviders();
@@ -1028,6 +1129,19 @@ onMounted(async () => {
   };
   document.addEventListener('mouseup', sidepanelSelectionMouseupHandler);
   document.addEventListener('mousedown', sidepanelSelectionMousedownHandler);
+
+  formulaMenuPointerdownHandler = (event: PointerEvent) => {
+    handleFormulaMenuPointerDown(event);
+  };
+  formulaMenuKeydownHandler = (event: KeyboardEvent) => {
+    handleFormulaMenuKeydown(event);
+  };
+  formulaMenuScrollHandler = () => {
+    handleFormulaMenuScroll();
+  };
+  document.addEventListener('pointerdown', formulaMenuPointerdownHandler);
+  document.addEventListener('keydown', formulaMenuKeydownHandler);
+  document.addEventListener('scroll', formulaMenuScrollHandler, true);
 });
 
 // Skills 变更消息处理
@@ -1125,6 +1239,15 @@ onUnmounted(() => {
   }
   if (sidepanelSelectionMousedownHandler) {
     document.removeEventListener('mousedown', sidepanelSelectionMousedownHandler);
+  }
+  if (formulaMenuPointerdownHandler) {
+    document.removeEventListener('pointerdown', formulaMenuPointerdownHandler);
+  }
+  if (formulaMenuKeydownHandler) {
+    document.removeEventListener('keydown', formulaMenuKeydownHandler);
+  }
+  if (formulaMenuScrollHandler) {
+    document.removeEventListener('scroll', formulaMenuScrollHandler, true);
   }
   // 清理调试面板刷新定时器
   if (debugRefreshTimer) {
@@ -1988,7 +2111,7 @@ function rejectScript() {
         <div 
           class="message" 
           :class="msg.role"
-          @mousemove="msg.role === 'assistant' ? handleMessageMouseMove($event, getMessageRenderKey(msg, idx)) : undefined"
+          @contextmenu="msg.role === 'assistant' ? handleFormulaContextMenu($event) : undefined"
         >
           <div v-if="msg.content || msg.reasoning || msg.images?.length" class="message-time">{{ formatTime(msg.timestamp) }}</div>
           
@@ -2027,7 +2150,7 @@ function rejectScript() {
             <div v-if="msg.quote" class="quote">"{{ msg.quote }}"</div>
             
             <!-- 消息操作按钮（顶部悬浮） -->
-            <div class="message-actions" :class="{ 'force-hide': msg.role === 'assistant' && copyButtonPosition[getMessageRenderKey(msg, idx)] === 'bottom' }">
+            <div class="message-actions">
               <!-- 编辑按钮（仅用户消息） -->
               <button 
                 v-if="msg.role === 'user' && !isEditing"
@@ -2043,7 +2166,7 @@ function rejectScript() {
               
               <!-- AI 消息顶部复制按钮 -->
               <button 
-                v-if="msg.role === 'assistant' && msg.content && copyButtonPosition[getMessageRenderKey(msg, idx)] !== 'bottom'"
+                v-if="msg.role === 'assistant' && msg.content"
                 class="message-action-btn copy-btn"
                 @click="copyMessage(idx, getMessageRenderKey(msg, idx))"
                 :title="copiedMessageKey === getMessageRenderKey(msg, idx) ? i18n('copied') : i18n('copyMessage')"
@@ -2088,23 +2211,6 @@ function rejectScript() {
             <div v-if="msg.role === 'assistant'" class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
             <div v-else-if="msg.content" v-html="msg.content.replace(/\n/g, '<br>')"></div>
             
-            <!-- AI 消息底部复制按钮（悬浮显示，仅当鼠标在下半部分时） -->
-            <div v-if="msg.role === 'assistant' && msg.content && copyButtonPosition[getMessageRenderKey(msg, idx)] === 'bottom'" class="message-actions-bottom">
-              <button 
-                class="message-action-btn copy-btn"
-                @click="copyMessage(idx, getMessageRenderKey(msg, idx))"
-                :title="copiedMessageKey === getMessageRenderKey(msg, idx) ? i18n('copied') : i18n('copyMessage')"
-                :class="{ copied: copiedMessageKey === getMessageRenderKey(msg, idx) }"
-              >
-                <svg v-if="copiedMessageKey !== getMessageRenderKey(msg, idx)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-                </svg>
-                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polyline points="20 6 9 17 4 12"/>
-                </svg>
-              </button>
-            </div>
           </template>
         </div>
       </template>
@@ -2131,6 +2237,17 @@ function rejectScript() {
     >
       <button class="inline-selection-btn" @mousedown.stop @mouseup.stop @click="useSidepanelSelectionQuote">
         {{ i18n('quoteSelection') }}
+      </button>
+    </div>
+    <div
+      v-if="formulaContextMenu.visible"
+      ref="formulaContextMenuRef"
+      class="formula-context-menu"
+      :style="{ left: `${formulaContextMenu.x}px`, top: `${formulaContextMenu.y}px` }"
+      @contextmenu.prevent
+    >
+      <button class="formula-context-menu-item" @click="copyFormulaFromContextMenu">
+        {{ i18n('copyFormula') }}
       </button>
     </div>
 

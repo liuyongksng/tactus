@@ -217,8 +217,10 @@ export interface Translations {
   // 消息操作
   editMessage: string;
   copyMessage: string;
+  copyFormula: string;
   copy: string;
   copied: string;
+  copyFailed: string;
   send: string;
 }
 
@@ -435,8 +437,10 @@ const en: Translations = {
   // 消息操作
   editMessage: 'Edit message',
   copyMessage: 'Copy message',
+  copyFormula: 'Copy formula',
   copy: 'Copy',
   copied: 'Copied!',
+  copyFailed: 'Copy failed',
   send: 'Send',
 };
 
@@ -653,8 +657,10 @@ const zhCN: Translations = {
   // 消息操作
   editMessage: '编辑消息',
   copyMessage: '复制消息',
+  copyFormula: '复制公式',
   copy: '复制',
   copied: '已复制！',
+  copyFailed: '复制失败',
   send: '发送',
 };
 
