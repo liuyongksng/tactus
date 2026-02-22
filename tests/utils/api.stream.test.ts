@@ -96,6 +96,8 @@ function createProvider(overrides: Partial<AIProvider> = {}): AIProvider {
     responsesSystemPromptMode: 'instructions',
     responsesReasoningEffort: 'medium',
     responsesReasoningSummary: 'auto',
+    contextWindowTokens: null,
+    maxOutputTokens: null,
     ...overrides,
   };
 }
@@ -180,6 +182,61 @@ describe('streamChat 主链路', () => {
     ).toBe(true);
     expect(events.some(event => event.type === 'content' && event.content === 'retry-success')).toBe(true);
     expect(events[events.length - 1]).toEqual({ type: 'done' });
+  });
+
+  it('chat.completions 请求应注入 max_completion_tokens', async () => {
+    const openaiMock = (await import('openai')) as unknown as OpenAIMockHooks;
+    let capturedRequest: Record<string, unknown> | null = null;
+
+    openaiMock.__queueChatCreate(async (...args: unknown[]) => {
+      capturedRequest = args[0] as Record<string, unknown>;
+      return fromChunks([
+        {
+          choices: [{ delta: { content: 'chat-with-limit' } }],
+        },
+      ]);
+    });
+
+    const events = await collectEvents(
+      streamChat(
+        createProvider({ apiMode: 'chat_completions', maxOutputTokens: 4096 }),
+        [createUserMessage('hello')],
+        undefined,
+        { enableTools: false },
+        RETRY_CONFIG,
+      ),
+    );
+
+    expect(capturedRequest?.['max_completion_tokens']).toBe(4096);
+    expect(events.some(event => event.type === 'content' && event.content === 'chat-with-limit')).toBe(true);
+  });
+
+  it('responses 请求应注入 max_output_tokens', async () => {
+    const openaiMock = (await import('openai')) as unknown as OpenAIMockHooks;
+    let capturedRequest: Record<string, unknown> | null = null;
+
+    openaiMock.__queueResponsesCreate(async (...args: unknown[]) => {
+      capturedRequest = args[0] as Record<string, unknown>;
+      return fromChunks([
+        {
+          type: 'response.output_text.delta',
+          delta: 'responses-with-limit',
+        },
+      ]);
+    });
+
+    const events = await collectEvents(
+      streamChat(
+        createProvider({ apiMode: 'responses', maxOutputTokens: 2048 }),
+        [createUserMessage('hello')],
+        undefined,
+        { enableTools: false },
+        RETRY_CONFIG,
+      ),
+    );
+
+    expect(capturedRequest?.['max_output_tokens']).toBe(2048);
+    expect(events.some(event => event.type === 'content' && event.content === 'responses-with-limit')).toBe(true);
   });
 
   it('工具执行失败重试时应回滚失败轮消息并仅保留成功轮', async () => {

@@ -114,8 +114,32 @@ const formSystemPromptTemplate = ref(DEFAULT_SYSTEM_PROMPT_TEMPLATE);
 const formModels = ref<string[]>([]);
 const formCustomModel = ref('');
 const formVisionModelSupport = ref<Record<string, boolean>>({});
+const formContextWindowTokens = ref<number | null>(null);
+const formMaxOutputTokens = ref<number | null>(null);
 
 const isNewProvider = computed(() => selectedProviderId.value === 'new');
+
+function normalizeOptionalTokenInput(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : null;
+}
+
+const normalizedContextWindowTokens = computed(() => normalizeOptionalTokenInput(formContextWindowTokens.value));
+const normalizedMaxOutputTokens = computed(() => normalizeOptionalTokenInput(formMaxOutputTokens.value));
+const tokenSettingsInvalid = computed(() => {
+  if (normalizedContextWindowTokens.value === null || normalizedMaxOutputTokens.value === null) {
+    return false;
+  }
+  return normalizedMaxOutputTokens.value > normalizedContextWindowTokens.value;
+});
+const effectiveInputTokenBudget = computed(() => {
+  if (normalizedContextWindowTokens.value === null || normalizedMaxOutputTokens.value === null) {
+    return null;
+  }
+  const budget = normalizedContextWindowTokens.value - normalizedMaxOutputTokens.value;
+  return budget >= 0 ? budget : null;
+});
 
 // Skills 管理
 const skills = ref<Skill[]>([]);
@@ -237,6 +261,8 @@ function selectProvider(id: string) {
     formSystemPromptTemplate.value = provider.systemPromptTemplate || DEFAULT_SYSTEM_PROMPT_TEMPLATE;
     formModels.value = Array.isArray(provider.models) ? [...provider.models] : [];
     formVisionModelSupport.value = { ...(provider.visionModelSupport || {}) };
+    formContextWindowTokens.value = provider.contextWindowTokens ?? null;
+    formMaxOutputTokens.value = provider.maxOutputTokens ?? null;
     formCustomModel.value = '';
     availableModels.value = [];
   }
@@ -251,6 +277,8 @@ function addNewProvider() {
   formSystemPromptTemplate.value = DEFAULT_SYSTEM_PROMPT_TEMPLATE;
   formModels.value = [];
   formVisionModelSupport.value = {};
+  formContextWindowTokens.value = null;
+  formMaxOutputTokens.value = null;
   formCustomModel.value = '';
   availableModels.value = [];
 }
@@ -306,6 +334,10 @@ async function saveCurrentProvider() {
     alert(i18n('addAtLeastOneModel'));
     return;
   }
+  if (tokenSettingsInvalid.value) {
+    alert(i18n('tokenSettingsInvalid'));
+    return;
+  }
   isSaving.value = true;
   try {
     const existingProvider = providers.value.find(p => p.id === selectedProviderId.value);
@@ -318,6 +350,8 @@ async function saveCurrentProvider() {
         ? previousEffort
         : getDefaultReasoningEffortForModel(selectedModel);
     const systemPromptTemplate = formSystemPromptTemplate.value.trim() || DEFAULT_SYSTEM_PROMPT_TEMPLATE;
+    const contextWindowTokens = normalizedContextWindowTokens.value;
+    const maxOutputTokens = normalizedMaxOutputTokens.value;
     const provider: AIProvider = {
       id: isNewProvider.value ? crypto.randomUUID() : selectedProviderId.value!,
       name: formName.value,
@@ -333,6 +367,8 @@ async function saveCurrentProvider() {
       ),
       responsesReasoningEffort,
       responsesReasoningSummary: 'auto',
+      contextWindowTokens,
+      maxOutputTokens,
     };
     await saveProvider(provider);
     providers.value = await getAllProviders();
@@ -740,6 +776,34 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                   ></textarea>
                   <p class="form-hint">{{ i18n('systemPromptDesc') }}</p>
                   <p class="form-hint">{{ i18n('systemPromptHint') }}</p>
+                </div>
+                <div class="form-group">
+                  <label>{{ i18n('contextWindowTokens') }}</label>
+                  <input
+                    v-model.number="formContextWindowTokens"
+                    type="number"
+                    min="1"
+                    step="1000"
+                    :placeholder="i18n('contextWindowTokensPlaceholder')"
+                  />
+                  <p class="form-hint">{{ i18n('contextWindowTokensDesc') }}</p>
+                </div>
+                <div class="form-group">
+                  <label>{{ i18n('maxOutputTokens') }}</label>
+                  <input
+                    v-model.number="formMaxOutputTokens"
+                    type="number"
+                    min="1"
+                    step="1000"
+                    :placeholder="i18n('maxOutputTokensPlaceholder')"
+                  />
+                  <p class="form-hint">{{ i18n('maxOutputTokensDesc') }}</p>
+                  <p v-if="effectiveInputTokenBudget !== null" class="form-hint">
+                    {{ i18n('effectiveInputBudget', { count: effectiveInputTokenBudget }) }}
+                  </p>
+                  <p v-if="tokenSettingsInvalid" class="form-hint form-hint-error">
+                    {{ i18n('tokenSettingsInvalid') }}
+                  </p>
                 </div>
                 <div class="form-group">
                   <div class="label-row">

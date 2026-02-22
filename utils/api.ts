@@ -615,6 +615,15 @@ function shouldUseResponsesMode(provider: AIProvider): boolean {
   return provider.apiMode !== 'chat_completions';
 }
 
+export function resolveMaxOutputTokens(
+  provider: Pick<AIProvider, 'maxOutputTokens'>,
+): number | undefined {
+  const value = provider.maxOutputTokens;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : undefined;
+}
+
 export interface ResponsesReasoningConfig {
   effort: ResponsesReasoningEffort;
   summary: 'auto';
@@ -791,6 +800,7 @@ async function* streamChatWithChatCompletions(
   const toolExecutor = config?.toolExecutor;
   const maxIterations = config?.maxIterations || 5;
   const maxToolCalls = Math.max(1, config?.maxToolCalls || 100);
+  const maxOutputTokens = resolveMaxOutputTokens(provider);
   const allowImages = isVisionSupportedForModel(provider, provider.selectedModel);
   const apiContextSessionKey = context?.sessionKey;
   const sessionHeaders = buildSessionHeaders(context?.sessionKey);
@@ -866,13 +876,21 @@ async function* streamChatWithChatCompletions(
         if (sessionHeaders) {
           requestOptions.headers = sessionHeaders;
         }
-        stream = await client.chat.completions.create({
+        const requestBody: Record<string, unknown> = {
           model: provider.selectedModel,
           messages: convertToOpenAIMessages(currentMessages),
           tools: openaiTools,
           tool_choice: openaiTools ? 'auto' : undefined,
           stream: true,
-        }, requestOptions as any);
+        };
+        if (typeof maxOutputTokens === 'number') {
+          requestBody.max_completion_tokens = maxOutputTokens;
+        }
+
+        stream = (await client.chat.completions.create(
+          requestBody as any,
+          requestOptions as any,
+        )) as unknown as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
         
         clear();
         lastError = null;
@@ -1247,6 +1265,7 @@ async function* streamChatWithResponses(
   const toolExecutor = config?.toolExecutor;
   const maxIterations = config?.maxIterations || 5;
   const maxToolCalls = Math.max(1, config?.maxToolCalls || 100);
+  const maxOutputTokens = resolveMaxOutputTokens(provider);
   const allowImages = isVisionSupportedForModel(provider, provider.selectedModel);
   const apiContextSessionKey = context?.sessionKey;
   const abortSignal = config?.abortSignal;
@@ -1322,6 +1341,9 @@ async function* streamChatWithResponses(
           input: responseInput,
           stream: true,
         };
+        if (typeof maxOutputTokens === 'number') {
+          requestBody.max_output_tokens = maxOutputTokens;
+        }
         if (responseTools) {
           requestBody.tools = responseTools;
         }
@@ -1678,6 +1700,7 @@ export async function* streamChatSimple(
   retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG
 ): AsyncGenerator<string, void, unknown> {
   const client = createClient(provider);
+  const maxOutputTokens = resolveMaxOutputTokens(provider);
   const allowImages = isVisionSupportedForModel(provider, provider.selectedModel);
   const pageContextPrompt = pageContent
     ? `The user is viewing a webpage with the following content:\n\n${pageContent}\n\nAnswer questions based on this context when relevant.`
@@ -1701,13 +1724,18 @@ export async function* streamChatSimple(
     const { controller, clear } = createTimeoutController(retryConfig.timeout);
     
     try {
-      stream = await client.chat.completions.create({
+      const requestBody: Record<string, unknown> = {
         model: provider.selectedModel,
         messages: convertToOpenAIMessages(apiMessages),
         stream: true,
-      }, {
+      };
+      if (typeof maxOutputTokens === 'number') {
+        requestBody.max_completion_tokens = maxOutputTokens;
+      }
+
+      stream = (await client.chat.completions.create(requestBody as any, {
         signal: controller.signal,
-      });
+      })) as unknown as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
       
       clear();
       break;

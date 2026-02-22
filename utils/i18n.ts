@@ -41,6 +41,14 @@ export interface Translations {
   systemPromptDesc: string;
   systemPromptPlaceholder: string;
   systemPromptHint: string;
+  contextWindowTokens: string;
+  contextWindowTokensPlaceholder: string;
+  contextWindowTokensDesc: string;
+  maxOutputTokens: string;
+  maxOutputTokensPlaceholder: string;
+  maxOutputTokensDesc: string;
+  effectiveInputBudget: string;
+  tokenSettingsInvalid: string;
   modelList: string;
   fetchModels: string;
   fetchingModels: string;
@@ -269,6 +277,14 @@ const en: Translations = {
   systemPromptDesc: 'Customize assistant behavior for this provider. This applies to both Chat Completions and Responses.',
   systemPromptPlaceholder: 'Enter system instructions for this provider...',
   systemPromptHint: 'If left blank, the default prompt template will be used automatically.',
+  contextWindowTokens: 'Context Window (tokens)',
+  contextWindowTokensPlaceholder: 'e.g. 400000',
+  contextWindowTokensDesc: 'Reference budget setting for this model. This value is local metadata and is not sent directly to API.',
+  maxOutputTokens: 'Max Output Tokens',
+  maxOutputTokensPlaceholder: 'e.g. 128000',
+  maxOutputTokensDesc: 'Sent as max_output_tokens (Responses) or max_completion_tokens (Chat Completions).',
+  effectiveInputBudget: 'Estimated input budget: {count} tokens',
+  tokenSettingsInvalid: 'Max Output Tokens cannot be greater than Context Window.',
   modelList: 'Models',
   fetchModels: 'Fetch Models',
   fetchingModels: 'Fetching...',
@@ -497,6 +513,14 @@ const zhCN: Translations = {
   systemPromptDesc: '用于定义该服务商的助手行为，会同时作用于 Chat Completions 和 Responses。',
   systemPromptPlaceholder: '输入该服务商的系统指令...',
   systemPromptHint: '留空会自动回退到默认系统提示词。',
+  contextWindowTokens: '上下文窗口（tokens）',
+  contextWindowTokensPlaceholder: '例如：400000',
+  contextWindowTokensDesc: '这是本地预算参考值，不会直接作为 API 参数发送。',
+  maxOutputTokens: '最大输出 tokens',
+  maxOutputTokensPlaceholder: '例如：128000',
+  maxOutputTokensDesc: '会注入为 Responses 的 max_output_tokens 或 Chat Completions 的 max_completion_tokens。',
+  effectiveInputBudget: '预计可用输入预算：{count} tokens',
+  tokenSettingsInvalid: '最大输出 tokens 不能大于上下文窗口。',
   modelList: '模型列表',
   fetchModels: '获取可用模型',
   fetchingModels: '获取中...',

@@ -1569,6 +1569,10 @@ body {
   color: var(--muted-foreground);
 }
 
+.form-hint-error {
+  color: var(--danger);
+}
+
 .mcp-test-result {
   display: flex;
   align-items: center;

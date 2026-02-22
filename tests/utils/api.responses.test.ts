@@ -7,6 +7,7 @@ import {
   buildSystemMessage,
   buildResponsesInput,
   buildSessionHeaders,
+  resolveMaxOutputTokens,
   getLastApiMessages,
   parseResponsesStreamEvent,
   rollbackToolIterationMessages,
@@ -294,6 +295,8 @@ describe('buildResponsesReasoning', () => {
       responsesSystemPromptMode: 'instructions',
       responsesReasoningEffort: 'high',
       responsesReasoningSummary: 'auto',
+      contextWindowTokens: null,
+      maxOutputTokens: null,
       ...overrides,
     };
   }
@@ -345,6 +348,8 @@ describe('buildResponsesTools', () => {
       responsesSystemPromptMode: 'instructions',
       responsesReasoningEffort: 'medium',
       responsesReasoningSummary: 'auto',
+      contextWindowTokens: null,
+      maxOutputTokens: null,
       ...overrides,
     };
   }
@@ -386,6 +391,20 @@ describe('buildResponsesTools', () => {
         { enableTools: false },
       ),
     ).toBeUndefined();
+  });
+});
+
+describe('resolveMaxOutputTokens', () => {
+  it('应返回合法的正整数 token 上限', () => {
+    expect(resolveMaxOutputTokens({ maxOutputTokens: 2048 })).toBe(2048);
+    expect(resolveMaxOutputTokens({ maxOutputTokens: 2048.9 })).toBe(2048);
+  });
+
+  it('应在空值或非法值时返回 undefined', () => {
+    expect(resolveMaxOutputTokens({ maxOutputTokens: null })).toBeUndefined();
+    expect(resolveMaxOutputTokens({ maxOutputTokens: 0 })).toBeUndefined();
+    expect(resolveMaxOutputTokens({ maxOutputTokens: -1 })).toBeUndefined();
+    expect(resolveMaxOutputTokens({ maxOutputTokens: Number.NaN })).toBeUndefined();
   });
 });
 

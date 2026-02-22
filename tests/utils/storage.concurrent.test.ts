@@ -12,7 +12,7 @@ import {
   type AIProvider,
 } from '../../utils/storage';
 
-function createProvider(id: string): AIProvider {
+function createProvider(id: string, overrides: Partial<AIProvider> = {}): AIProvider {
   return {
     id,
     name: `Provider-${id}`,
@@ -26,6 +26,9 @@ function createProvider(id: string): AIProvider {
     responsesSystemPromptMode: 'instructions',
     responsesReasoningEffort: 'medium',
     responsesReasoningSummary: 'auto',
+    contextWindowTokens: null,
+    maxOutputTokens: null,
+    ...overrides,
   };
 }
 
@@ -64,6 +67,20 @@ describe('storage 并发写入', () => {
 
     const providers = await getAllProviders();
     expect(providers.map(provider => provider.id)).toEqual(['provider-c']);
+  });
+
+  it('saveProvider 应将无效 token 配置归一化为 null', async () => {
+    await saveProvider(
+      createProvider('provider-token', {
+        contextWindowTokens: -10,
+        maxOutputTokens: Number.NaN,
+      }),
+    );
+
+    const providers = await getAllProviders();
+    const provider = providers.find(item => item.id === 'provider-token');
+    expect(provider?.contextWindowTokens).toBeNull();
+    expect(provider?.maxOutputTokens).toBeNull();
   });
 
   it('trustScript 并发写入时不应丢失脚本信任记录', async () => {

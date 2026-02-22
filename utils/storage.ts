@@ -21,6 +21,8 @@ export interface AIProvider {
   responsesSystemPromptMode: ResponsesSystemPromptMode;
   responsesReasoningEffort: ResponsesReasoningEffort;
   responsesReasoningSummary: ResponsesReasoningSummary;
+  contextWindowTokens: number | null;
+  maxOutputTokens: number | null;
 }
 
 export type ProviderApiMode = 'auto' | 'chat_completions' | 'responses';
@@ -556,6 +558,12 @@ function normalizeVisionModelSupport(
   return normalized;
 }
 
+function normalizeOptionalPositiveInt(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : null;
+}
+
 function normalizeProvider(provider: AIProvider): AIProvider {
   const legacyProvider = provider as LegacyProvider;
   const models = normalizeModelList(legacyProvider.models);
@@ -572,6 +580,8 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     selectedModel,
   );
   const responsesReasoningSummary = normalizeResponsesReasoningSummary(legacyProvider.responsesReasoningSummary);
+  const contextWindowTokens = normalizeOptionalPositiveInt(legacyProvider.contextWindowTokens);
+  const maxOutputTokens = normalizeOptionalPositiveInt(legacyProvider.maxOutputTokens);
 
   return {
     id: provider.id,
@@ -586,6 +596,8 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     responsesSystemPromptMode,
     responsesReasoningEffort,
     responsesReasoningSummary,
+    contextWindowTokens,
+    maxOutputTokens,
   };
 }
 
