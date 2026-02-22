@@ -134,6 +134,22 @@ const formulaContextMenu = ref({
 const formulaContextMenuRef = ref<HTMLElement | null>(null);
 const chatAbortController = ref<AbortController | null>(null);
 
+function createGenerationAbortController(): AbortController {
+  chatAbortController.value?.abort();
+  const nextAbortController = new AbortController();
+  chatAbortController.value = nextAbortController;
+  return nextAbortController;
+}
+
+function clearGenerationStateIfCurrent(abortController: AbortController): void {
+  if (chatAbortController.value !== abortController) {
+    return;
+  }
+  chatAbortController.value = null;
+  isLoading.value = false;
+  toolStatus.value = null;
+}
+
 // Session state
 const currentSession = ref<ChatSession | null>(null);
 const sessions = ref<ChatSession[]>([]);
@@ -488,8 +504,7 @@ async function regenerateResponse(): Promise<void> {
   
   isLoading.value = true;
   toolStatus.value = null;
-  chatAbortController.value?.abort();
-  chatAbortController.value = new AbortController();
+  const activeAbortController = createGenerationAbortController();
   let assistantMessage: ChatMessage | null = null;
   
   try {
@@ -508,7 +523,7 @@ async function regenerateResponse(): Promise<void> {
       toolExecutor,
       maxIterations: 10,
       maxToolCalls: maxToolCalls.value,
-      abortSignal: chatAbortController.value.signal,
+      abortSignal: activeAbortController.signal,
     };
     
     // 构建 Skills 信息
@@ -615,9 +630,7 @@ async function regenerateResponse(): Promise<void> {
       triggerRef(messages);
     }
   } finally {
-    chatAbortController.value = null;
-    isLoading.value = false;
-    toolStatus.value = null;
+    clearGenerationStateIfCurrent(activeAbortController);
     await saveCurrentSession();
   }
 }
@@ -983,10 +996,13 @@ function handleSidepanelSelectionMousedown(event: MouseEvent): void {
 }
 
 function terminateCurrentGeneration(): void {
-  if (!chatAbortController.value) return;
-  chatAbortController.value.abort();
-  toolStatus.value = currentLanguage.value === 'zh-CN' ? '已终止' : 'Stopped';
-  isLoading.value = false;
+  const activeAbortController = chatAbortController.value;
+  if (!activeAbortController) return;
+  activeAbortController.abort();
+  if (chatAbortController.value === activeAbortController) {
+    toolStatus.value = currentLanguage.value === 'zh-CN' ? '已终止' : 'Stopped';
+    isLoading.value = false;
+  }
 }
 
 // Initialize
@@ -1655,8 +1671,11 @@ function handleSessionListScroll(e: Event) {
 
 // Send message
 async function sendMessage() {
-  const text = inputText.value.trim();
+  const inputTextDraft = inputText.value;
+  const text = inputTextDraft.trim();
   const hasImages = pendingImages.value.length > 0;
+  const pendingQuoteDraft = pendingQuote.value;
+  const pendingImagesDraft = pendingImages.value.map(image => ({ ...image }));
   if ((!text && !hasImages) || isLoading.value || isEditing.value) {
     return;
   }
@@ -1670,13 +1689,11 @@ async function sendMessage() {
   // 立即设置 loading 状态，防止重复调用
   isLoading.value = true;
   toolStatus.value = null;
-  chatAbortController.value?.abort();
-  chatAbortController.value = new AbortController();
+  const activeAbortController = createGenerationAbortController();
 
   const provider = await getActiveProvider();
   if (!provider) {
-    chatAbortController.value = null;
-    isLoading.value = false;
+    clearGenerationStateIfCurrent(activeAbortController);
     alert(i18n('noModelConfig'));
     openSettings();
     return;
@@ -1688,12 +1705,12 @@ async function sendMessage() {
   }
   const sessionId = currentSession.value.id;
 
-  const messageImages = pendingImages.value.map(image => ({ ...image }));
+  const messageImages = pendingImagesDraft.map(image => ({ ...image }));
   const userMessage: ChatMessage = {
     role: 'user',
     content: text,
     timestamp: Date.now(),
-    quote: pendingQuote.value || undefined,
+    quote: pendingQuoteDraft || undefined,
     images: messageImages.length > 0 ? messageImages : undefined,
   };
 
@@ -1725,7 +1742,7 @@ async function sendMessage() {
       toolExecutor,
       maxIterations: 10,
       maxToolCalls: maxToolCalls.value,
-      abortSignal: chatAbortController.value.signal,
+      abortSignal: activeAbortController.signal,
     };
 
     // 构建 Skills 信息
@@ -1835,11 +1852,21 @@ async function sendMessage() {
         timestamp: Date.now(),
       });
       triggerRef(messages);
+
+      // 请求失败时恢复引用和图片草稿，方便用户直接重试
+      if (inputText.value.length === 0 && inputTextDraft.length > 0) {
+        inputText.value = inputTextDraft;
+      }
+      if (!pendingQuote.value && pendingQuoteDraft) {
+        pendingQuote.value = pendingQuoteDraft;
+      }
+      if (pendingImages.value.length === 0 && pendingImagesDraft.length > 0) {
+        pendingImages.value = pendingImagesDraft.map(image => ({ ...image }));
+        isImageDragActive.value = true;
+      }
     }
   } finally {
-    chatAbortController.value = null;
-    isLoading.value = false;
-    toolStatus.value = null;
+    clearGenerationStateIfCurrent(activeAbortController);
     // 不自动滚动，让用户自行控制查看位置
     await saveCurrentSession();
   }

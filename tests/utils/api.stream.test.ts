@@ -271,6 +271,159 @@ describe('streamChat 主链路', () => {
     expect(serialized.includes('call-success')).toBe(true);
   });
 
+  it('工具执行器抛异常时应触发重试并回滚失败轮消息', async () => {
+    const openaiMock = (await import('openai')) as unknown as OpenAIMockHooks;
+
+    openaiMock.__queueChatCreate(async () =>
+      fromChunks([
+        {
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call-throw-first',
+                    function: { name: 'extract_page_content', arguments: '{}' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ]),
+    );
+    openaiMock.__queueChatCreate(async () =>
+      fromChunks([
+        {
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call-throw-second',
+                    function: { name: 'extract_page_content', arguments: '{}' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ]),
+    );
+    openaiMock.__queueChatCreate(async () =>
+      fromChunks([
+        {
+          choices: [{ delta: { content: 'tool-throw-final-answer' } }],
+        },
+      ]),
+    );
+
+    let executorRuns = 0;
+    const events = await collectEvents(
+      streamChat(
+        createProvider({ apiMode: 'chat_completions' }),
+        [createUserMessage('tool throw test')],
+        undefined,
+        {
+          enableTools: true,
+          toolExecutor: async toolCall => {
+            executorRuns += 1;
+            if (executorRuns === 1) {
+              throw new Error('tool executor crashed');
+            }
+            return {
+              tool_call_id: toolCall.id,
+              name: toolCall.name,
+              result: '{"ok":true}',
+              success: true,
+            };
+          },
+        },
+        RETRY_CONFIG,
+      ),
+    );
+
+    expect(executorRuns).toBe(2);
+    expect(events.some(event => event.type === 'thinking' && event.message.includes('工具执行'))).toBe(true);
+    expect(events.some(event => event.type === 'content' && event.content === 'tool-throw-final-answer')).toBe(true);
+
+    const finalMessages = getLastApiMessages() as ApiMessage[];
+    const serialized = JSON.stringify(finalMessages);
+    expect(serialized.includes('call-throw-first')).toBe(false);
+    expect(serialized.includes('call-throw-second')).toBe(true);
+  });
+
+  it('responses 模式下工具执行器抛异常时应触发重试并回滚失败轮消息', async () => {
+    const openaiMock = (await import('openai')) as unknown as OpenAIMockHooks;
+
+    openaiMock.__queueResponsesCreate(async () =>
+      fromChunks([
+        {
+          type: 'response.function_call_arguments.done',
+          call_id: 'resp-call-throw-first',
+          name: 'extract_page_content',
+          arguments: '{}',
+        },
+      ]),
+    );
+    openaiMock.__queueResponsesCreate(async () =>
+      fromChunks([
+        {
+          type: 'response.function_call_arguments.done',
+          call_id: 'resp-call-throw-second',
+          name: 'extract_page_content',
+          arguments: '{}',
+        },
+      ]),
+    );
+    openaiMock.__queueResponsesCreate(async () =>
+      fromChunks([
+        {
+          type: 'response.output_text.delta',
+          delta: 'responses-tool-throw-final-answer',
+        },
+      ]),
+    );
+
+    let executorRuns = 0;
+    const events = await collectEvents(
+      streamChat(
+        createProvider({ apiMode: 'responses' }),
+        [createUserMessage('responses tool throw test')],
+        undefined,
+        {
+          enableTools: true,
+          toolExecutor: async toolCall => {
+            executorRuns += 1;
+            if (executorRuns === 1) {
+              throw new Error('responses tool executor crashed');
+            }
+            return {
+              tool_call_id: toolCall.id,
+              name: toolCall.name,
+              result: '{"ok":true}',
+              success: true,
+            };
+          },
+        },
+        RETRY_CONFIG,
+      ),
+    );
+
+    expect(executorRuns).toBe(2);
+    expect(events.some(event => event.type === 'thinking' && event.message.includes('工具执行异常'))).toBe(true);
+    expect(
+      events.some(event => event.type === 'content' && event.content === 'responses-tool-throw-final-answer'),
+    ).toBe(true);
+
+    const finalMessages = getLastApiMessages() as ApiMessage[];
+    const serialized = JSON.stringify(finalMessages);
+    expect(serialized.includes('resp-call-throw-first')).toBe(false);
+    expect(serialized.includes('resp-call-throw-second')).toBe(true);
+  });
+
   it('PDF 边界提示作为成功工具结果时不应触发失败重试', async () => {
     const openaiMock = (await import('openai')) as unknown as OpenAIMockHooks;
 

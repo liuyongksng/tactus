@@ -1132,7 +1132,37 @@ async function* streamChatWithChatCompletions(
         
         // 执行工具
         executedToolCallCount++;
-        const result = await toolExecutor(toolCall);
+        let result: ToolResult;
+        try {
+          result = await toolExecutor(toolCall);
+        } catch (executionError) {
+          hasExecutionError = true;
+          toolCallRetryCount++;
+          const parsedExecutionError = parseError(executionError);
+          const executionErrorMessage = parsedExecutionError.message || '工具执行异常';
+          console.warn(`[Tool Execution Error] 工具执行异常 (${toolCallRetryCount}/${maxToolCallRetries})`);
+          console.error('  工具名:', tc.name);
+          console.error('  错误:', executionError);
+
+          if (toolCallRetryCount >= maxToolCallRetries) {
+            const error = new ApiError(
+              `工具执行失败：${executionErrorMessage}，已重试 ${maxToolCallRetries} 次`,
+              'TOOL_EXECUTION_ERROR',
+              false,
+              executionError,
+            );
+            yield { type: 'error', error, retrying: false, attempt: toolCallRetryCount };
+            throw error;
+          }
+
+          yield {
+            type: 'thinking',
+            message: `工具执行异常，正在重试 (${toolCallRetryCount}/${maxToolCallRetries})...`,
+          };
+
+          // 跳出工具执行循环，准备重试
+          break;
+        }
         yield { type: 'tool_result', result };
         
         // 检查工具执行是否失败
@@ -1535,7 +1565,31 @@ async function* streamChatWithResponses(
         yield { type: 'thinking', message: getToolStatusText(tc.name, parsedArgs) };
 
         executedToolCallCount++;
-        const result = await toolExecutor(toolCall);
+        let result: ToolResult;
+        try {
+          result = await toolExecutor(toolCall);
+        } catch (executionError) {
+          hasExecutionError = true;
+          toolCallRetryCount++;
+          const parsedExecutionError = parseError(executionError);
+          const executionErrorMessage = parsedExecutionError.message || '工具执行异常';
+
+          if (toolCallRetryCount >= maxToolCallRetries) {
+            const error = new ApiError(
+              `工具执行失败：${executionErrorMessage}，已重试 ${maxToolCallRetries} 次`,
+              'TOOL_EXECUTION_ERROR',
+              false,
+              executionError,
+            );
+            yield { type: 'error', error, retrying: false, attempt: toolCallRetryCount };
+            throw error;
+          }
+          yield {
+            type: 'thinking',
+            message: `工具执行异常，正在重试 (${toolCallRetryCount}/${maxToolCallRetries})...`,
+          };
+          break;
+        }
         yield { type: 'tool_result', result };
 
         if (!result.success) {
