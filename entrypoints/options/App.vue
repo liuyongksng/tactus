@@ -16,6 +16,8 @@ import {
   setSelectionQuoteEnabled,
   getMaxPageContentLength,
   setMaxPageContentLength,
+  getMaxPdfExtractPages,
+  setMaxPdfExtractPages,
   getMaxToolCalls,
   setMaxToolCalls,
   getRawExtractSites,
@@ -71,6 +73,9 @@ const selectionQuoteEnabled = ref(true);
 
 // 网页内容字数上限
 const maxPageContentLength = ref(30000);
+
+// PDF 提取最大页数（0 = 不限制）
+const maxPdfExtractPages = ref(30);
 
 // 工具调用最大次数
 const maxToolCalls = ref(100);
@@ -160,6 +165,8 @@ onMounted(async () => {
   selectionQuoteEnabled.value = await getSelectionQuoteEnabled();
   // 加载网页字数上限
   maxPageContentLength.value = await getMaxPageContentLength();
+  // 加载 PDF 最大提取页数
+  maxPdfExtractPages.value = await getMaxPdfExtractPages();
   // 加载工具调用上限
   maxToolCalls.value = await getMaxToolCalls();
   // 加载原始提取网站设置
@@ -444,6 +451,14 @@ async function handleMaxPageContentLengthChange() {
     : 30000;
   maxPageContentLength.value = normalized;
   await setMaxPageContentLength(normalized);
+}
+
+async function handleMaxPdfExtractPagesChange() {
+  const normalized = Number.isFinite(maxPdfExtractPages.value)
+    ? Math.max(0, Math.floor(maxPdfExtractPages.value))
+    : 30;
+  maxPdfExtractPages.value = normalized;
+  await setMaxPdfExtractPages(normalized);
 }
 
 async function handleMaxToolCallsChange() {
@@ -1066,6 +1081,39 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                 </div>
               </div>
               
+              <div class="settings-divider"></div>
+
+              <div class="settings-item settings-item-vertical">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                      <path d="M14 2v6h6"/>
+                      <path d="M8 13h8"/>
+                      <path d="M8 17h5"/>
+                    </svg>
+                    <span>{{ i18n('pdfExtractPageLimit') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('pdfExtractPageLimitDesc') }}</p>
+                </div>
+                <div class="settings-item-content">
+                  <div class="site-input-row">
+                    <input
+                      v-model.number="maxPdfExtractPages"
+                      type="number"
+                      min="0"
+                      step="1"
+                      class="site-input"
+                      @change="handleMaxPdfExtractPagesChange"
+                    />
+                    <button class="btn btn-primary btn-sm" @click="handleMaxPdfExtractPagesChange">
+                      {{ i18n('save') }}
+                    </button>
+                  </div>
+                  <p class="settings-hint">{{ i18n('pdfExtractPageLimitHint') }}</p>
+                </div>
+              </div>
+
               <div class="settings-divider"></div>
 
               <div class="settings-item settings-item-vertical">

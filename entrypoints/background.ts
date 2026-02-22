@@ -69,6 +69,446 @@ async function executeScriptInTab(tabId: number, code: string, args: Record<stri
   throw new Error('脚本执行超时');
 }
 
+interface PdfDownloadCacheConfig {
+  chunkSizeBytes: number;
+  maxEntries: number;
+  maxTotalBytes: number;
+  sessionTtlMs: number;
+}
+
+interface PdfDownloadCacheEntry {
+  url: string;
+  bytes: Uint8Array;
+  byteLength: number;
+  lastAccessed: number;
+  activeDownloadIds: Set<string>;
+}
+
+interface PdfDownloadSessionRecord {
+  url: string;
+  lastAccessed: number;
+}
+
+const DEFAULT_PDF_DOWNLOAD_CACHE_CONFIG: Readonly<PdfDownloadCacheConfig> = {
+  chunkSizeBytes: 4 * 1024 * 1024,
+  maxEntries: 5,
+  maxTotalBytes: 256 * 1024 * 1024,
+  sessionTtlMs: 5 * 60 * 1000,
+};
+
+const pdfDownloadCacheConfig: PdfDownloadCacheConfig = {
+  ...DEFAULT_PDF_DOWNLOAD_CACHE_CONFIG,
+};
+
+const pdfDownloadCache = new Map<string, PdfDownloadCacheEntry>();
+const pdfDownloadSessions = new Map<string, PdfDownloadSessionRecord>();
+let pdfDownloadCacheTotalBytes = 0;
+let pdfDownloadSessionCounter = 0;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function getMessageType(message: unknown): string | null {
+  if (!isRecord(message)) return null;
+  const { type } = message;
+  return typeof type === 'string' ? type : null;
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  if (typeof error === 'string' && error.trim()) {
+    return error.trim();
+  }
+  return '未知错误';
+}
+
+function parseNonEmptyString(value: unknown, fieldName: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${fieldName} 不能为空`);
+  }
+  return value.trim();
+}
+
+function parseNonNegativeInteger(value: unknown, fieldName: string): number {
+  if (typeof value !== 'number' && typeof value !== 'string') {
+    throw new Error(`${fieldName} 必须是非负整数`);
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${fieldName} 必须是非负整数`);
+  }
+  return parsed;
+}
+
+function parsePositiveInteger(value: unknown, fieldName: string): number {
+  const parsed = parseNonNegativeInteger(value, fieldName);
+  if (parsed <= 0) {
+    throw new Error(`${fieldName} 必须大于 0`);
+  }
+  return parsed;
+}
+
+function parsePdfUrlFromMessage(message: Record<string, unknown>): string {
+  const rawUrl = message.url ?? message.sourceUrl ?? message.pdfUrl;
+  return parseNonEmptyString(rawUrl, 'url');
+}
+
+function parseDownloadIdFromMessage(message: Record<string, unknown>): string {
+  const rawDownloadId = message.downloadId ?? message.sessionId ?? message.id;
+  return parseNonEmptyString(rawDownloadId, 'downloadId');
+}
+
+function parseChunkIndexFromMessage(message: Record<string, unknown>): number {
+  const rawChunkIndex = message.chunkIndex ?? message.index;
+  return parseNonNegativeInteger(rawChunkIndex, 'chunkIndex');
+}
+
+function isPdfDownloadSessionExpired(session: PdfDownloadSessionRecord, now: number): boolean {
+  return now - session.lastAccessed > pdfDownloadCacheConfig.sessionTtlMs;
+}
+
+function releasePdfDownloadSession(downloadId: string): string | null {
+  const session = pdfDownloadSessions.get(downloadId);
+  if (!session) {
+    return null;
+  }
+
+  pdfDownloadSessions.delete(downloadId);
+  const entry = pdfDownloadCache.get(session.url);
+  if (entry) {
+    entry.activeDownloadIds.delete(downloadId);
+  }
+  return session.url;
+}
+
+function cleanupExpiredPdfDownloadSessions(now: number = Date.now()): void {
+  for (const [downloadId, session] of pdfDownloadSessions.entries()) {
+    if (isPdfDownloadSessionExpired(session, now)) {
+      releasePdfDownloadSession(downloadId);
+    }
+  }
+}
+
+function touchPdfCacheEntry(url: string, entry: PdfDownloadCacheEntry): void {
+  entry.lastAccessed = Date.now();
+  pdfDownloadCache.delete(url);
+  pdfDownloadCache.set(url, entry);
+}
+
+function removePdfCacheEntry(url: string): void {
+  const entry = pdfDownloadCache.get(url);
+  if (!entry || entry.activeDownloadIds.size > 0) {
+    return;
+  }
+  pdfDownloadCache.delete(url);
+  pdfDownloadCacheTotalBytes -= entry.byteLength;
+  if (pdfDownloadCacheTotalBytes < 0) {
+    pdfDownloadCacheTotalBytes = 0;
+  }
+}
+
+function pickEvictablePdfCacheKey(): string | null {
+  for (const [url, entry] of pdfDownloadCache.entries()) {
+    if (entry.activeDownloadIds.size === 0) {
+      return url;
+    }
+  }
+  return null;
+}
+
+function ensurePdfCacheCapacity(requiredBytes: number, incomingEntries: number): boolean {
+  cleanupExpiredPdfDownloadSessions();
+
+  if (requiredBytes > pdfDownloadCacheConfig.maxTotalBytes) {
+    return false;
+  }
+
+  while (
+    pdfDownloadCache.size + incomingEntries > pdfDownloadCacheConfig.maxEntries
+    || pdfDownloadCacheTotalBytes + requiredBytes > pdfDownloadCacheConfig.maxTotalBytes
+  ) {
+    const evictableKey = pickEvictablePdfCacheKey();
+    if (!evictableKey) {
+      return false;
+    }
+    removePdfCacheEntry(evictableKey);
+  }
+  return true;
+}
+
+function createPdfDownloadId(): string {
+  pdfDownloadSessionCounter += 1;
+  return `pdf_download_${Date.now()}_${pdfDownloadSessionCounter}`;
+}
+
+function encodeBytesToBase64(bytes: Uint8Array): string {
+  const maybeBuffer = (
+    globalThis as { Buffer?: { from: (value: Uint8Array) => { toString: (encoding: string) => string } } }
+  ).Buffer;
+  if (maybeBuffer?.from) {
+    return maybeBuffer.from(bytes).toString('base64');
+  }
+
+  if (typeof btoa !== 'function') {
+    throw new Error('当前环境不支持 base64 编码');
+  }
+
+  const CHUNK_SIZE = 0x8000;
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += CHUNK_SIZE) {
+    const end = Math.min(index + CHUNK_SIZE, bytes.length);
+    binary += String.fromCharCode(...bytes.subarray(index, end));
+  }
+  return btoa(binary);
+}
+
+async function fetchPdfBinary(url: string): Promise<Uint8Array> {
+  let response: Response;
+  try {
+    response = await fetch(url, { credentials: 'include' });
+  } catch (error) {
+    throw new Error(`下载 PDF 失败: ${toErrorMessage(error)}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(`下载 PDF 失败: HTTP ${response.status}`);
+  }
+
+  try {
+    const arrayBuffer = await response.arrayBuffer();
+    return new Uint8Array(arrayBuffer);
+  } catch (error) {
+    throw new Error(`读取 PDF 数据失败: ${toErrorMessage(error)}`);
+  }
+}
+
+async function handlePdfDownloadInit(message: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const now = Date.now();
+  cleanupExpiredPdfDownloadSessions(now);
+
+  const url = parsePdfUrlFromMessage(message);
+  let entry = pdfDownloadCache.get(url);
+  let fromCache = Boolean(entry);
+
+  if (!entry) {
+    const bytes = await fetchPdfBinary(url);
+    const existingEntry = pdfDownloadCache.get(url);
+    if (existingEntry) {
+      // 并发 INIT 时，后到请求复用已缓存 entry，避免重复累计 totalBytes。
+      entry = existingEntry;
+      fromCache = true;
+    } else {
+      if (!ensurePdfCacheCapacity(bytes.byteLength, 1)) {
+        throw new Error('PDF 缓存空间不足，请先释放旧会话后重试');
+      }
+
+      entry = {
+        url,
+        bytes,
+        byteLength: bytes.byteLength,
+        lastAccessed: now,
+        activeDownloadIds: new Set<string>(),
+      };
+      pdfDownloadCache.set(url, entry);
+      pdfDownloadCacheTotalBytes += bytes.byteLength;
+      fromCache = false;
+    }
+  }
+
+  touchPdfCacheEntry(url, entry);
+  const downloadId = createPdfDownloadId();
+  entry.activeDownloadIds.add(downloadId);
+  pdfDownloadSessions.set(downloadId, {
+    url,
+    lastAccessed: now,
+  });
+
+  const chunkCount = entry.byteLength === 0
+    ? 0
+    : Math.ceil(entry.byteLength / pdfDownloadCacheConfig.chunkSizeBytes);
+
+  return {
+    downloadId,
+    url,
+    chunkSize: pdfDownloadCacheConfig.chunkSizeBytes,
+    chunkCount,
+    totalBytes: entry.byteLength,
+    fromCache,
+    lastAccessed: entry.lastAccessed,
+    cacheStats: {
+      entries: pdfDownloadCache.size,
+      totalBytes: pdfDownloadCacheTotalBytes,
+    },
+  };
+}
+
+function handlePdfDownloadChunk(message: Record<string, unknown>): Record<string, unknown> {
+  const now = Date.now();
+  cleanupExpiredPdfDownloadSessions(now);
+
+  const downloadId = parseDownloadIdFromMessage(message);
+  const chunkIndex = parseChunkIndexFromMessage(message);
+  const session = pdfDownloadSessions.get(downloadId);
+
+  if (!session) {
+    throw new Error('下载会话不存在或已释放');
+  }
+
+  if (isPdfDownloadSessionExpired(session, now)) {
+    releasePdfDownloadSession(downloadId);
+    throw new Error('下载会话已过期，请重新初始化下载');
+  }
+
+  session.lastAccessed = now;
+  const url = session.url;
+
+  const entry = pdfDownloadCache.get(url);
+  if (!entry) {
+    releasePdfDownloadSession(downloadId);
+    throw new Error('PDF 缓存已失效，请重新初始化下载');
+  }
+
+  touchPdfCacheEntry(url, entry);
+  const chunkSize = pdfDownloadCacheConfig.chunkSizeBytes;
+  const chunkCount = entry.byteLength === 0 ? 0 : Math.ceil(entry.byteLength / chunkSize);
+
+  if (chunkCount === 0) {
+    if (chunkIndex !== 0) {
+      throw new Error('chunkIndex 超出范围');
+    }
+    return {
+      downloadId,
+      chunkIndex,
+      chunkSize,
+      chunkCount,
+      totalBytes: 0,
+      chunkByteLength: 0,
+      isLastChunk: true,
+      lastAccessed: entry.lastAccessed,
+      chunk: new ArrayBuffer(0),
+    };
+  }
+
+  if (chunkIndex >= chunkCount) {
+    throw new Error('chunkIndex 超出范围');
+  }
+
+  const start = chunkIndex * chunkSize;
+  const end = Math.min(start + chunkSize, entry.byteLength);
+  const chunkBytes = entry.bytes.slice(start, end);
+  const chunkBase64 = encodeBytesToBase64(chunkBytes);
+
+  return {
+    downloadId,
+    chunkIndex,
+    chunkSize,
+    chunkCount,
+    totalBytes: entry.byteLength,
+    chunkByteLength: chunkBytes.byteLength,
+    isLastChunk: chunkIndex === chunkCount - 1,
+    lastAccessed: entry.lastAccessed,
+    base64: chunkBase64,
+  };
+}
+
+function handlePdfDownloadRelease(message: Record<string, unknown>): Record<string, unknown> {
+  const now = Date.now();
+  cleanupExpiredPdfDownloadSessions(now);
+
+  const downloadId = parseDownloadIdFromMessage(message);
+  const url = releasePdfDownloadSession(downloadId);
+
+  if (!url) {
+    return {
+      downloadId,
+      released: false,
+      cacheStats: {
+        entries: pdfDownloadCache.size,
+        totalBytes: pdfDownloadCacheTotalBytes,
+      },
+    };
+  }
+
+  ensurePdfCacheCapacity(0, 0);
+
+  return {
+    downloadId,
+    released: true,
+    cacheStats: {
+      entries: pdfDownloadCache.size,
+      totalBytes: pdfDownloadCacheTotalBytes,
+    },
+  };
+}
+
+function clearPdfDownloadCacheRuntime(): Record<string, unknown> {
+  const before = {
+    entries: pdfDownloadCache.size,
+    totalBytes: pdfDownloadCacheTotalBytes,
+    sessions: pdfDownloadSessions.size,
+  };
+
+  pdfDownloadCache.clear();
+  pdfDownloadSessions.clear();
+  pdfDownloadCacheTotalBytes = 0;
+  pdfDownloadSessionCounter = 0;
+
+  return {
+    cleared: true,
+    before,
+    after: {
+      entries: 0,
+      totalBytes: 0,
+      sessions: 0,
+    },
+  };
+}
+
+function runAsyncMessageHandler(
+  sendResponse: (response: Record<string, unknown>) => void,
+  handler: () => Promise<Record<string, unknown>> | Record<string, unknown>,
+): void {
+  Promise.resolve()
+    .then(handler)
+    .then(payload => {
+      sendResponse({ success: true, ...payload });
+    })
+    .catch(error => {
+      sendResponse({
+        success: false,
+        error: toErrorMessage(error),
+      });
+    });
+}
+
+export function resetPdfDownloadCacheForTests(): void {
+  pdfDownloadCache.clear();
+  pdfDownloadSessions.clear();
+  pdfDownloadCacheTotalBytes = 0;
+  pdfDownloadSessionCounter = 0;
+  Object.assign(pdfDownloadCacheConfig, DEFAULT_PDF_DOWNLOAD_CACHE_CONFIG);
+}
+
+export function setPdfDownloadCacheConfigForTests(config: Partial<PdfDownloadCacheConfig>): void {
+  if (typeof config.chunkSizeBytes !== 'undefined') {
+    pdfDownloadCacheConfig.chunkSizeBytes = parsePositiveInteger(config.chunkSizeBytes, 'chunkSizeBytes');
+  }
+  if (typeof config.maxEntries !== 'undefined') {
+    pdfDownloadCacheConfig.maxEntries = parsePositiveInteger(config.maxEntries, 'maxEntries');
+  }
+  if (typeof config.maxTotalBytes !== 'undefined') {
+    pdfDownloadCacheConfig.maxTotalBytes = parsePositiveInteger(config.maxTotalBytes, 'maxTotalBytes');
+  }
+  if (typeof config.sessionTtlMs !== 'undefined') {
+    pdfDownloadCacheConfig.sessionTtlMs = parsePositiveInteger(config.sessionTtlMs, 'sessionTtlMs');
+  }
+
+  ensurePdfCacheCapacity(0, 0);
+}
+
 export default defineBackground(() => {
   // 监听扩展安装事件
   browser.runtime.onInstalled.addListener(async ({ reason }) => {
@@ -101,12 +541,15 @@ export default defineBackground(() => {
 
   // Handle messages from content script
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'OPEN_SIDEPANEL') {
+    const normalizedMessage = isRecord(message) ? message : {};
+    const messageType = getMessageType(normalizedMessage);
+
+    if (messageType === 'OPEN_SIDEPANEL') {
       if (sender.tab?.id) {
         browser.sidePanel.open({ tabId: sender.tab.id });
       }
     }
-    if (message.type === 'TOGGLE_SIDEPANEL') {
+    if (messageType === 'TOGGLE_SIDEPANEL') {
       if (sender.tab?.id) {
         if (sidePanelPort) {
           // sidepanel 已打开，发送关闭消息
@@ -117,18 +560,42 @@ export default defineBackground(() => {
         }
       }
     }
-    if (message.type === 'SET_QUOTE') {
+    if (messageType === 'SET_QUOTE') {
       // Store quote temporarily for sidepanel to pick up
-      browser.storage.local.set({ pendingQuote: message.quote });
+      browser.storage.local.set({ pendingQuote: normalizedMessage.quote });
+    }
+
+    if (messageType === 'PDF_DOWNLOAD_INIT') {
+      runAsyncMessageHandler(sendResponse, () => handlePdfDownloadInit(normalizedMessage));
+      return true;
+    }
+
+    if (messageType === 'PDF_DOWNLOAD_CHUNK') {
+      runAsyncMessageHandler(sendResponse, () => handlePdfDownloadChunk(normalizedMessage));
+      return true;
+    }
+
+    if (messageType === 'PDF_DOWNLOAD_RELEASE') {
+      runAsyncMessageHandler(sendResponse, () => handlePdfDownloadRelease(normalizedMessage));
+      return true;
+    }
+
+    if (messageType === 'PDF_CACHE_CLEAR_ALL') {
+      runAsyncMessageHandler(sendResponse, () => clearPdfDownloadCacheRuntime());
+      return true;
     }
     
     // 处理脚本执行请求
-    if (message.type === 'EXECUTE_SKILL_SCRIPT') {
-      const { tabId, code, args, scriptId } = message;
-      executeScriptInTab(tabId, code, args, scriptId)
-        .then(result => sendResponse({ success: true, result }))
-        .catch(error => sendResponse({ success: false, error: error.message }));
-      return true; // 保持消息通道开放
+    if (messageType === 'EXECUTE_SKILL_SCRIPT') {
+      runAsyncMessageHandler(sendResponse, async () => {
+        const tabId = parseNonNegativeInteger(normalizedMessage.tabId, 'tabId');
+        const code = parseNonEmptyString(normalizedMessage.code, 'code');
+        const scriptId = parseNonEmptyString(normalizedMessage.scriptId, 'scriptId');
+        const args = isRecord(normalizedMessage.args) ? normalizedMessage.args : {};
+        const result = await executeScriptInTab(tabId, code, args, scriptId);
+        return { result };
+      });
+      return true;
     }
     
     return true;

@@ -49,7 +49,8 @@ Tactus is the first product to implement the Agent Skills specification in a bro
 ### 📄 Page Understanding
 
 - **Smart Extraction** - Uses Readability + Turndown to extract core page content and convert to Markdown
-- **PDF Reading** - Automatically detects PDF pages and extracts text layer content for follow-up Q&A (with page limits and cache reuse)
+- **PDF Reading** - Automatically detects PDF pages and extracts text layer content for follow-up Q&A, with chunked background download/cache, progress updates, concurrent dedupe, and integrity checks
+- **PDF Cache Clear** - Top-right one-click action to clear PDF binary cache and extraction result cache after reading
 - **Selection Quote** - Select text on page or in sidebar and quote it with one click
 - **Stable Shared-Page Follow-up** - In Responses mode, tool call history (`function_call`) and tool output (`function_call_output`) are paired and replayed correctly, avoiding second-turn failures
 - **Context Awareness** - AI determines whether to call page extraction tool; skips if skill script provides content

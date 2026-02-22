@@ -122,6 +122,9 @@ export interface Translations {
   pageContentLimit: string;
   pageContentLimitDesc: string;
   pageContentLimitHint: string;
+  pdfExtractPageLimit: string;
+  pdfExtractPageLimitDesc: string;
+  pdfExtractPageLimitHint: string;
   toolCallLimit: string;
   toolCallLimitDesc: string;
   toolCallLimitHint: string;
@@ -213,6 +216,11 @@ export interface Translations {
   activatingSkill: string;
   executingScript: string;
   readingFile: string;
+  clearPdfCaches: string;
+  confirmClearPdfCaches: string;
+  clearingPdfCaches: string;
+  clearPdfCachesDone: string;
+  clearPdfCachesFailed: string;
   
   // 消息操作
   editMessage: string;
@@ -342,6 +350,9 @@ const en: Translations = {
   pageContentLimit: 'Max page content length',
   pageContentLimitDesc: 'Maximum number of characters extracted from current page',
   pageContentLimitHint: 'Used by page extraction tools to truncate long content',
+  pdfExtractPageLimit: 'PDF max extract pages',
+  pdfExtractPageLimitDesc: 'Maximum pages to extract from a PDF (0 = no limit)',
+  pdfExtractPageLimitHint: 'Large values may increase extraction time and memory usage',
   toolCallLimit: 'Max tool calls',
   toolCallLimitDesc: 'Maximum number of tool calls per request',
   toolCallLimitHint: 'Stop tool loop once the limit is reached',
@@ -433,6 +444,11 @@ const en: Translations = {
   activatingSkill: 'Activating Skill: {name}...',
   executingScript: 'Executing script: {skill}/{script}...',
   readingFile: 'Reading file: {skill}/{file}...',
+  clearPdfCaches: 'Clear PDF caches',
+  confirmClearPdfCaches: 'Clear all PDF binary cache and extraction result cache now?',
+  clearingPdfCaches: 'Clearing PDF caches...',
+  clearPdfCachesDone: 'PDF caches cleared',
+  clearPdfCachesFailed: 'Failed to clear PDF caches: {error}',
   
   // 消息操作
   editMessage: 'Edit message',
@@ -562,6 +578,9 @@ const zhCN: Translations = {
   pageContentLimit: '网页最大字数限制',
   pageContentLimitDesc: '提取当前网页内容时的最大字符数',
   pageContentLimitHint: '用于页面提取工具，超出后会自动截断',
+  pdfExtractPageLimit: 'PDF 最大提取页数',
+  pdfExtractPageLimitDesc: '提取 PDF 时允许读取的最大页数（0 表示不限制）',
+  pdfExtractPageLimitHint: '页数越大，提取耗时和内存占用可能越高',
   toolCallLimit: '工具调用最大次数',
   toolCallLimitDesc: '每次请求允许的工具调用上限',
   toolCallLimitHint: '达到上限后将停止工具循环',
@@ -653,6 +672,11 @@ const zhCN: Translations = {
   activatingSkill: '正在激活 Skill: {name}...',
   executingScript: '正在执行脚本: {skill}/{script}...',
   readingFile: '正在读取文件: {skill}/{file}...',
+  clearPdfCaches: '清理 PDF 缓存',
+  confirmClearPdfCaches: '确认清空所有 PDF 文件缓存和提取结果缓存吗？',
+  clearingPdfCaches: '正在清理 PDF 缓存...',
+  clearPdfCachesDone: 'PDF 缓存已清空',
+  clearPdfCachesFailed: '清理 PDF 缓存失败：{error}',
   
   // 消息操作
   editMessage: '编辑消息',

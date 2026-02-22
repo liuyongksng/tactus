@@ -22,6 +22,8 @@ import {
   watchSelectionQuoteEnabled,
   getMaxPageContentLength,
   watchMaxPageContentLength,
+  getMaxPdfExtractPages,
+  watchMaxPdfExtractPages,
   getMaxToolCalls,
   watchMaxToolCalls,
   getRawExtractSites,
@@ -53,7 +55,13 @@ import {
 } from '../../utils/db';
 import { streamChat, getLastApiMessages, setLastApiMessages, ApiError, type ToolExecutor, type ApiMessage } from '../../utils/api';
 import { extractPageContent, truncateContent } from '../../utils/pageExtractor';
-import { extractPdfContent, isPdfUrl } from '../../utils/pdfExtractor';
+import {
+  clearPdfExtractorRuntimeCache,
+  extractPdfContent,
+  formatPdfExtractionProgressText,
+  isPdfUrl,
+  type PdfExtractProgress,
+} from '../../utils/pdfExtractor';
 import { getToolStatusText, isMcpTool, parseMcpToolName, type ToolCall, type ToolResult, type SkillInfo } from '../../utils/tools';
 import { getAllSkills, getSkillByName, getSkillFileAsText, type Skill } from '../../utils/skills';
 import { executeScript, setScriptConfirmCallback, type ScriptConfirmationRequest } from '../../utils/skillsExecutor';
@@ -95,6 +103,7 @@ const showHistory = ref(false);
 const chatAreaRef = ref<HTMLElement | null>(null);
 const toolStatus = ref<string | null>(null); // 工具执行状态提示
 const maxPageContentLength = ref(30000);
+const maxPdfExtractPages = ref(30);
 const maxToolCalls = ref(100);
 const selectionQuoteEnabled = ref(true);
 const imageInputRef = ref<HTMLInputElement | null>(null);
@@ -988,6 +997,7 @@ const unwatchThemeMode = ref<(() => void) | null>(null);
 const unwatchFontSettings = ref<(() => void) | null>(null);
 const unwatchSelectionQuoteEnabled = ref<(() => void) | null>(null);
 const unwatchMaxPageContentLength = ref<(() => void) | null>(null);
+const unwatchMaxPdfExtractPages = ref<(() => void) | null>(null);
 const unwatchMaxToolCalls = ref<(() => void) | null>(null);
 const systemThemeMediaQuery = ref<MediaQueryList | null>(null);
 let storageChangeListener: ((...args: any[]) => void) | null = null;
@@ -1007,6 +1017,7 @@ onMounted(async () => {
   webSearchEnabled.value = await getWebSearchEnabled();
   selectionQuoteEnabled.value = await getSelectionQuoteEnabled();
   maxPageContentLength.value = await getMaxPageContentLength();
+  maxPdfExtractPages.value = await getMaxPdfExtractPages();
   maxToolCalls.value = await getMaxToolCalls();
   
   // 加载语言设置
@@ -1080,6 +1091,11 @@ onMounted(async () => {
   // 监听网页提取字数上限变化
   unwatchMaxPageContentLength.value = watchMaxPageContentLength((value) => {
     maxPageContentLength.value = value;
+  });
+
+  // 监听 PDF 提取页数上限变化
+  unwatchMaxPdfExtractPages.value = watchMaxPdfExtractPages((value) => {
+    maxPdfExtractPages.value = value;
   });
 
   // 监听工具调用次数上限变化
@@ -1218,6 +1234,7 @@ onUnmounted(() => {
   unwatchFontSettings.value?.();
   unwatchSelectionQuoteEnabled.value?.();
   unwatchMaxPageContentLength.value?.();
+  unwatchMaxPdfExtractPages.value?.();
   unwatchMaxToolCalls.value?.();
   // 移除系统主题监听
   systemThemeMediaQuery.value?.removeEventListener('change', handleSystemThemeChange);
@@ -1284,16 +1301,71 @@ const scrollToBottom = () => {
   });
 };
 
+interface ExtractCleanPageContentOptions {
+  onStatus?: (statusText: string) => void;
+}
+
+type ExtractPageStatusKey =
+  | 'preparing'
+  | 'checkingPageType'
+  | 'preparingPdf'
+  | 'readingHtml'
+  | 'nestedPdf'
+  | 'parsingHtml';
+
+function getExtractPageStatusText(key: ExtractPageStatusKey): string {
+  const zh = currentLanguage.value === 'zh-CN';
+  switch (key) {
+    case 'preparing':
+      return zh ? '提取页面内容：准备中...' : 'Extracting page content: preparing...';
+    case 'checkingPageType':
+      return zh ? '提取页面内容：正在检查页面类型...' : 'Extracting page content: checking page type...';
+    case 'preparingPdf':
+      return zh ? '提取页面内容：正在准备 PDF 提取...' : 'Extracting page content: preparing PDF extraction...';
+    case 'readingHtml':
+      return zh ? '提取页面内容：正在读取网页源码...' : 'Extracting page content: reading page source...';
+    case 'nestedPdf':
+      return zh ? '提取页面内容：检测到嵌套 PDF，正在提取...' : 'Extracting page content: nested PDF detected, extracting...';
+    case 'parsingHtml':
+      return zh ? '提取页面内容：正在解析网页正文...' : 'Extracting page content: parsing page content...';
+    default:
+      return zh ? '提取页面内容：处理中...' : 'Extracting page content: processing...';
+  }
+}
+
+function buildPdfToolStatus(progress: PdfExtractProgress): string {
+  const progressText = formatPdfExtractionProgressText(
+    progress,
+    currentLanguage.value === 'zh-CN' ? 'zh-CN' : 'en',
+  );
+  return currentLanguage.value === 'zh-CN'
+    ? `提取页面内容：${progressText}`
+    : `Extracting page content: ${progressText}`;
+}
+
 // 使用 Readability + Turndown 提取清洗后的页面内容
-async function extractCleanPageContent(): Promise<string> {
+async function extractCleanPageContent(options: ExtractCleanPageContentOptions = {}): Promise<string> {
+  const reportStatus = (statusText: string): void => {
+    options.onStatus?.(statusText);
+  };
+
   try {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab.id || !tab.url) {
       return '无法获取当前页面信息';
     }
 
+    reportStatus(getExtractPageStatusText('checkingPageType'));
+
     if (isPdfUrl(tab.url)) {
-      const extracted = await extractPdfContent(tab.url);
+      reportStatus(getExtractPageStatusText('preparingPdf'));
+      const extracted = await extractPdfContent(tab.url, {
+        maxPages: maxPdfExtractPages.value,
+        maxChars: maxPageContentLength.value,
+        onProgress: progress => {
+          reportStatus(buildPdfToolStatus(progress));
+        },
+      });
       const content = truncateContent(extracted.content, maxPageContentLength.value);
       const metadata = [
         `# ${extracted.title || tab.title || 'PDF 文档'}`,
@@ -1308,6 +1380,7 @@ async function extractCleanPageContent(): Promise<string> {
       return metadata;
     }
 
+    reportStatus(getExtractPageStatusText('readingHtml'));
     const results = await browser.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
@@ -1326,7 +1399,14 @@ async function extractCleanPageContent(): Promise<string> {
     }
 
     if (typeof pageData.url === 'string' && isPdfUrl(pageData.url)) {
-      const extracted = await extractPdfContent(pageData.url);
+      reportStatus(getExtractPageStatusText('nestedPdf'));
+      const extracted = await extractPdfContent(pageData.url, {
+        maxPages: maxPdfExtractPages.value,
+        maxChars: maxPageContentLength.value,
+        onProgress: progress => {
+          reportStatus(buildPdfToolStatus(progress));
+        },
+      });
       const content = truncateContent(extracted.content, maxPageContentLength.value);
       const metadata = [
         `# ${extracted.title || pageData.title || 'PDF 文档'}`,
@@ -1349,6 +1429,7 @@ async function extractCleanPageContent(): Promise<string> {
     const rawExtractSites = await getRawExtractSites();
     const useRawExtract = isRawExtractSite(pageData.url, rawExtractSites);
     
+    reportStatus(getExtractPageStatusText('parsingHtml'));
     const extracted = extractPageContent(doc, pageData.url, { useRawExtract });
     const content = truncateContent(extracted.content, maxPageContentLength.value);
     
@@ -1374,7 +1455,12 @@ async function extractCleanPageContent(): Promise<string> {
 const toolExecutor: ToolExecutor = async (toolCall: ToolCall): Promise<ToolResult> => {
   switch (toolCall.name) {
     case 'extract_page_content': {
-      const content = await extractCleanPageContent();
+      toolStatus.value = getExtractPageStatusText('preparing');
+      const content = await extractCleanPageContent({
+        onStatus: (statusText: string) => {
+          toolStatus.value = statusText;
+        },
+      });
       // 检查是否是错误消息
       const isError = content.startsWith('无法获取') || content.startsWith('提取页面内容失败');
       return {
@@ -1858,6 +1944,39 @@ async function removeAllSessions() {
   isImageDragActive.value = false;
 }
 
+async function clearPdfCaches() {
+  if (!confirm(i18n('confirmClearPdfCaches'))) return;
+
+  const clearingText = i18n('clearingPdfCaches');
+  toolStatus.value = clearingText;
+
+  try {
+    const response = await browser.runtime.sendMessage({ type: 'PDF_CACHE_CLEAR_ALL' });
+    const normalized = (response && typeof response === 'object')
+      ? (response as { success?: boolean; error?: unknown })
+      : null;
+    if (!normalized || normalized.success === false) {
+      const error = normalized?.error;
+      const errorText = typeof error === 'string' ? error : '未知错误';
+      throw new Error(errorText);
+    }
+
+    clearPdfExtractorRuntimeCache();
+    const doneText = i18n('clearPdfCachesDone');
+    toolStatus.value = doneText;
+    setTimeout(() => {
+      if (toolStatus.value === doneText) {
+        toolStatus.value = null;
+      }
+    }, 2500);
+  } catch (error) {
+    const errorText = error instanceof Error && error.message ? error.message : '未知错误';
+    const failedText = i18n('clearPdfCachesFailed', { error: errorText });
+    toolStatus.value = failedText;
+    alert(failedText);
+  }
+}
+
 // Open settings page
 function openSettings() {
   browser.runtime.openOptionsPage();
@@ -2106,6 +2225,14 @@ function rejectScript() {
         <button class="icon-btn" @click="openHistory" :title="i18n('history')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+        </button>
+        <button class="icon-btn" @click="clearPdfCaches" :title="i18n('clearPdfCaches')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 6h18"/>
+            <path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+            <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+            <path d="M10 11v6M14 11v6"/>
           </svg>
         </button>
         <button class="icon-btn" @click="openSettings" :title="i18n('settings')">

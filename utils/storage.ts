@@ -289,8 +289,16 @@ export function watchRawExtractSites(callback: (sites: string[]) => void): () =>
 
 // ==================== Page Content Limit Settings ====================
 
+const DEFAULT_MAX_PAGE_CONTENT_LENGTH = 30000;
+const DEFAULT_MAX_PDF_EXTRACT_PAGES = 30;
+const DEFAULT_MAX_TOOL_CALLS = 100;
+
 const maxPageContentLengthStorage = storage.defineItem<number>('local:maxPageContentLength', {
-  fallback: 30000,
+  fallback: DEFAULT_MAX_PAGE_CONTENT_LENGTH,
+});
+
+const maxPdfExtractPagesStorage = storage.defineItem<number>('local:maxPdfExtractPages', {
+  fallback: DEFAULT_MAX_PDF_EXTRACT_PAGES,
 });
 
 function normalizePositiveInt(value: number, fallback: number): number {
@@ -299,39 +307,60 @@ function normalizePositiveInt(value: number, fallback: number): number {
   return normalized > 0 ? normalized : fallback;
 }
 
+function normalizeNonNegativeInt(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  const normalized = Math.floor(value);
+  return normalized >= 0 ? normalized : fallback;
+}
+
 export async function getMaxPageContentLength(): Promise<number> {
   const value = await maxPageContentLengthStorage.getValue();
-  return normalizePositiveInt(value, 30000);
+  return normalizePositiveInt(value, DEFAULT_MAX_PAGE_CONTENT_LENGTH);
 }
 
 export async function setMaxPageContentLength(value: number): Promise<void> {
-  await maxPageContentLengthStorage.setValue(normalizePositiveInt(value, 30000));
+  await maxPageContentLengthStorage.setValue(normalizePositiveInt(value, DEFAULT_MAX_PAGE_CONTENT_LENGTH));
 }
 
 export function watchMaxPageContentLength(callback: (value: number) => void): () => void {
   return maxPageContentLengthStorage.watch((newValue) => {
-    callback(normalizePositiveInt(newValue, 30000));
+    callback(normalizePositiveInt(newValue, DEFAULT_MAX_PAGE_CONTENT_LENGTH));
+  });
+}
+
+export async function getMaxPdfExtractPages(): Promise<number> {
+  const value = await maxPdfExtractPagesStorage.getValue();
+  return normalizeNonNegativeInt(value, DEFAULT_MAX_PDF_EXTRACT_PAGES);
+}
+
+export async function setMaxPdfExtractPages(value: number): Promise<void> {
+  await maxPdfExtractPagesStorage.setValue(normalizeNonNegativeInt(value, DEFAULT_MAX_PDF_EXTRACT_PAGES));
+}
+
+export function watchMaxPdfExtractPages(callback: (value: number) => void): () => void {
+  return maxPdfExtractPagesStorage.watch((newValue) => {
+    callback(normalizeNonNegativeInt(newValue, DEFAULT_MAX_PDF_EXTRACT_PAGES));
   });
 }
 
 // ==================== Tool Call Limit Settings ====================
 
 const maxToolCallsStorage = storage.defineItem<number>('local:maxToolCalls', {
-  fallback: 100,
+  fallback: DEFAULT_MAX_TOOL_CALLS,
 });
 
 export async function getMaxToolCalls(): Promise<number> {
   const value = await maxToolCallsStorage.getValue();
-  return normalizePositiveInt(value, 100);
+  return normalizePositiveInt(value, DEFAULT_MAX_TOOL_CALLS);
 }
 
 export async function setMaxToolCalls(value: number): Promise<void> {
-  await maxToolCallsStorage.setValue(normalizePositiveInt(value, 100));
+  await maxToolCallsStorage.setValue(normalizePositiveInt(value, DEFAULT_MAX_TOOL_CALLS));
 }
 
 export function watchMaxToolCalls(callback: (value: number) => void): () => void {
   return maxToolCallsStorage.watch((newValue) => {
-    callback(normalizePositiveInt(newValue, 100));
+    callback(normalizePositiveInt(newValue, DEFAULT_MAX_TOOL_CALLS));
   });
 }
 
