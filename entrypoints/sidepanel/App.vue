@@ -53,7 +53,19 @@ import {
   type ChatMessage,
   type ChatSession,
 } from '../../utils/db';
-import { streamChat, getLastApiMessages, setLastApiMessages, ApiError, type ToolExecutor, type ApiMessage } from '../../utils/api';
+import {
+  streamChat,
+  getLastApiMessages,
+  setLastApiMessages,
+  clearAllLastApiMessages,
+  getLastContextUsage,
+  setLastContextUsage,
+  clearLastContextUsage,
+  ApiError,
+  type ToolExecutor,
+  type ApiMessage,
+  type ContextUsageSnapshot,
+} from '../../utils/api';
 import { extractPageContent, truncateContent } from '../../utils/pageExtractor';
 import {
   clearPdfExtractorRuntimeCache,
@@ -166,6 +178,7 @@ const showModelSelector = ref(false);
 // Debug state
 const showDebugModal = ref(false);
 const debugApiMessages = ref<ApiMessage[]>([]);
+const debugContextUsage = ref<ContextUsageSnapshot | null>(null);
 
 function getLatestApiMessagesForSession(sessionId: string): ApiMessage[] {
   const memoryApiMessages = getLastApiMessages(sessionId);
@@ -176,6 +189,70 @@ function getLatestApiMessagesForSession(sessionId: string): ApiMessage[] {
     return currentSession.value.apiMessages;
   }
   return [];
+}
+
+function getLatestContextUsageForSession(sessionId: string): ContextUsageSnapshot | null {
+  const memoryUsage = getLastContextUsage(sessionId);
+  if (memoryUsage) {
+    return memoryUsage;
+  }
+
+  const persistedUsage = (
+    currentSession.value?.id === sessionId
+      ? currentSession.value.contextUsage
+      : sessions.value.find(session => session.id === sessionId)?.contextUsage
+  ) ?? null;
+
+  if (!persistedUsage) {
+    return null;
+  }
+  return setLastContextUsage(persistedUsage, sessionId);
+}
+
+function formatDebugUsageRatio(usageRatio: number | null): string {
+  if (usageRatio === null || !Number.isFinite(usageRatio)) return '--';
+  return `${(usageRatio * 100).toFixed(1)}%`;
+}
+
+function formatDebugUsageTime(updatedAt: number): string {
+  const date = new Date(updatedAt);
+  const locale = currentLanguage.value === 'zh-CN' ? 'zh-CN' : 'en-US';
+  return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function formatDebugTokenValue(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '--';
+  return String(Math.max(0, Math.floor(value)));
+}
+
+function getContextPrecisionLabel(precision: ContextUsageSnapshot['precision']): string {
+  switch (precision) {
+    case 'exact':
+      return i18n('debugContextPrecisionExact');
+    case 'mixed':
+      return i18n('debugContextPrecisionMixed');
+    case 'estimated':
+      return i18n('debugContextPrecisionEstimated');
+    case 'forced_full':
+      return i18n('debugContextPrecisionForcedFull');
+    default:
+      return precision;
+  }
+}
+
+function getContextSourceLabel(source: ContextUsageSnapshot['source']): string {
+  switch (source) {
+    case 'responses_usage':
+      return i18n('debugContextSourceResponses');
+    case 'chat_usage':
+      return i18n('debugContextSourceChat');
+    case 'local_estimate':
+      return i18n('debugContextSourceEstimate');
+    case 'overflow_guard':
+      return i18n('debugContextSourceOverflow');
+    default:
+      return source;
+  }
 }
 
 // 思维链折叠状态（按稳定消息 key 存储）
@@ -478,10 +555,13 @@ async function saveEditMessage(): Promise<void> {
   
   // 更新 API 上下文为截取后的版本
   setLastApiMessages(truncatedApiMessages, sessionId);
+  clearLastContextUsage(sessionId);
+  debugContextUsage.value = null;
   
   // 同时更新会话中保存的 apiMessages
   if (currentSession.value) {
     currentSession.value.apiMessages = truncatedApiMessages;
+    currentSession.value.contextUsage = undefined;
   }
   
   // 清空编辑状态
@@ -599,6 +679,14 @@ async function regenerateResponse(): Promise<void> {
             assistantMessage.content += '\n';
           }
           triggerRef(messages);
+          break;
+        case 'context_usage':
+          if (event.usage.sessionKey === sessionId) {
+            debugContextUsage.value = event.usage;
+            if (currentSession.value?.id === sessionId) {
+              currentSession.value.contextUsage = event.usage;
+            }
+          }
           break;
         case 'done':
           toolStatus.value = null;
@@ -1623,13 +1711,16 @@ async function saveCurrentSession() {
   if (!currentSession.value) return;
   const sessionId = currentSession.value.id;
   const latestApiMessages = getLatestApiMessagesForSession(sessionId);
+  const latestContextUsage = getLatestContextUsageForSession(sessionId);
   const sessionToSave: ChatSession = {
     ...currentSession.value,
     messages: JSON.parse(JSON.stringify(messages.value)),
     apiMessages: JSON.parse(JSON.stringify(latestApiMessages)), // 持久化 API 上下文
+    contextUsage: latestContextUsage ? JSON.parse(JSON.stringify(latestContextUsage)) : undefined, // 持久化上下文统计
   };
   await updateSession(sessionToSave);
   currentSession.value.apiMessages = sessionToSave.apiMessages;
+  currentSession.value.contextUsage = sessionToSave.contextUsage;
   // 刷新当前已加载的会话列表
   await loadInitialSessions();
 }
@@ -1822,6 +1913,14 @@ async function sendMessage() {
           }
           triggerRef(messages);
           break;
+        case 'context_usage':
+          if (event.usage.sessionKey === sessionId) {
+            debugContextUsage.value = event.usage;
+            if (currentSession.value?.id === sessionId) {
+              currentSession.value.contextUsage = event.usage;
+            }
+          }
+          break;
         case 'done':
           toolStatus.value = null;
           // 清理末尾空白
@@ -1908,7 +2007,9 @@ async function newChat() {
   messages.value = [];
   if (previousSessionId) {
     setLastApiMessages([], previousSessionId); // 清空当前会话的 API 上下文
+    clearLastContextUsage(previousSessionId);
   }
+  debugContextUsage.value = null;
   pendingImages.value = [];
   isImageDragActive.value = false;
   showHistory.value = false;
@@ -1930,6 +2031,7 @@ async function loadSession(session: ChatSession) {
   } else {
     setLastApiMessages([], session.id);
   }
+  debugContextUsage.value = getLatestContextUsageForSession(session.id);
   await setCurrentSessionId(session.id);
   showHistory.value = false;
   scrollToBottom();
@@ -1941,6 +2043,7 @@ async function removeSession(id: string, e: Event) {
   if (confirm(i18n('confirmDeleteChat'))) {
     await deleteSession(id);
     setLastApiMessages([], id);
+    clearLastContextUsage(id);
     sessions.value = await getAllSessions();
     if (currentSession.value?.id === id) {
       if (sessions.value.length > 0) {
@@ -1948,6 +2051,7 @@ async function removeSession(id: string, e: Event) {
       } else {
         currentSession.value = null;
         messages.value = [];
+        debugContextUsage.value = null;
       }
     }
   }
@@ -1956,16 +2060,14 @@ async function removeSession(id: string, e: Event) {
 async function removeAllSessions() {
   if (sessions.value.length === 0) return;
   if (!confirm(i18n('confirmDeleteAllChats'))) return;
-  const previousSessionId = currentSession.value?.id;
 
   await deleteAllSessions();
   await loadInitialSessions();
 
+  clearAllLastApiMessages();
   currentSession.value = null;
   messages.value = [];
-  if (previousSessionId) {
-    setLastApiMessages([], previousSessionId);
-  }
+  debugContextUsage.value = null;
   pendingImages.value = [];
   pendingQuote.value = null;
   isImageDragActive.value = false;
@@ -2113,6 +2215,7 @@ function viewDebugMessages() {
   // 只有当内存中没有数据时，才从会话中获取持久化的数据
   const sessionId = currentSession.value?.id;
   const memoryApiMessages = sessionId ? getLastApiMessages(sessionId) : [];
+  const memoryContextUsage = sessionId ? getLatestContextUsageForSession(sessionId) : null;
   if (memoryApiMessages.length > 0) {
     debugApiMessages.value = memoryApiMessages;
   } else if (currentSession.value?.apiMessages?.length) {
@@ -2120,6 +2223,7 @@ function viewDebugMessages() {
   } else {
     debugApiMessages.value = [];
   }
+  debugContextUsage.value = memoryContextUsage;
   showDebugModal.value = true;
   
   // 启动实时刷新（每 500ms 更新一次）
@@ -2131,9 +2235,11 @@ function viewDebugMessages() {
     if (!currentId) return;
     // 始终从内存获取最新数据
     const latestApiMessages = getLastApiMessages(currentId);
+    const latestContextUsage = getLatestContextUsageForSession(currentId);
     if (latestApiMessages.length > 0) {
       debugApiMessages.value = latestApiMessages;
     }
+    debugContextUsage.value = latestContextUsage;
   }, 500);
 }
 
@@ -2148,7 +2254,11 @@ function closeDebugModal() {
 
 // 复制调试信息到剪贴板
 function copyDebugMessages() {
-  const text = JSON.stringify(debugApiMessages.value, null, 2);
+  const payload = {
+    contextUsage: debugContextUsage.value,
+    apiMessages: debugApiMessages.value,
+  };
+  const text = JSON.stringify(payload, null, 2);
   navigator.clipboard.writeText(text);
 }
 
@@ -2651,6 +2761,52 @@ function rejectScript() {
           </div>
         </div>
         <div class="modal-body debug-body">
+          <div class="debug-usage-card">
+            <div class="debug-usage-title">{{ i18n('debugContextStatsTitle') }}</div>
+            <template v-if="debugContextUsage">
+              <div class="debug-usage-grid">
+                <div class="debug-usage-item">
+                  <span class="debug-usage-label">{{ i18n('debugContextTokens') }}</span>
+                  <span class="debug-usage-value">{{ debugContextUsage.currentTokensMixed }}</span>
+                </div>
+                <div class="debug-usage-item">
+                  <span class="debug-usage-label">{{ i18n('debugContextWindow') }}</span>
+                  <span class="debug-usage-value">
+                    {{ debugContextUsage.effectiveContextWindowTokens ?? i18n('debugContextUnknown') }}
+                  </span>
+                </div>
+                <div class="debug-usage-item">
+                  <span class="debug-usage-label">{{ i18n('debugContextRatio') }}</span>
+                  <span class="debug-usage-value">{{ formatDebugUsageRatio(debugContextUsage.usageRatio) }}</span>
+                </div>
+                <div class="debug-usage-item">
+                  <span class="debug-usage-label">{{ i18n('debugContextUpdatedAt') }}</span>
+                  <span class="debug-usage-value">{{ formatDebugUsageTime(debugContextUsage.updatedAt) }}</span>
+                </div>
+                <div class="debug-usage-item">
+                  <span class="debug-usage-label">{{ i18n('debugContextInputTokens') }}</span>
+                  <span class="debug-usage-value">{{ formatDebugTokenValue(debugContextUsage.tokenDetails.inputTokens) }}</span>
+                </div>
+                <div class="debug-usage-item">
+                  <span class="debug-usage-label">{{ i18n('debugContextOutputTokens') }}</span>
+                  <span class="debug-usage-value">{{ formatDebugTokenValue(debugContextUsage.tokenDetails.outputTokens) }}</span>
+                </div>
+                <div class="debug-usage-item">
+                  <span class="debug-usage-label">{{ i18n('debugContextCachedInputTokens') }}</span>
+                  <span class="debug-usage-value">{{ formatDebugTokenValue(debugContextUsage.tokenDetails.cachedInputTokens) }}</span>
+                </div>
+                <div class="debug-usage-item">
+                  <span class="debug-usage-label">{{ i18n('debugContextReasoningTokens') }}</span>
+                  <span class="debug-usage-value">{{ formatDebugTokenValue(debugContextUsage.tokenDetails.reasoningOutputTokens) }}</span>
+                </div>
+              </div>
+              <div class="debug-usage-tags">
+                <span class="debug-usage-badge">{{ i18n('debugContextPrecision') }}: {{ getContextPrecisionLabel(debugContextUsage.precision) }}</span>
+                <span class="debug-usage-badge">{{ i18n('debugContextSource') }}: {{ getContextSourceLabel(debugContextUsage.source) }}</span>
+              </div>
+            </template>
+            <div v-else class="debug-usage-empty">{{ i18n('debugContextStatsEmpty') }}</div>
+          </div>
           <div v-if="debugApiMessages.length === 0" class="empty-history">
             暂无 API 消息记录，请先发送一条消息
           </div>

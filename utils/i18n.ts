@@ -205,6 +205,27 @@ export interface Translations {
   currentModelNoVision: string;
   noModelConfig: string;
   notConfigured: string;
+  debugContextStatsTitle: string;
+  debugContextStatsEmpty: string;
+  debugContextTokens: string;
+  debugContextWindow: string;
+  debugContextRatio: string;
+  debugContextPrecision: string;
+  debugContextSource: string;
+  debugContextUpdatedAt: string;
+  debugContextInputTokens: string;
+  debugContextOutputTokens: string;
+  debugContextCachedInputTokens: string;
+  debugContextReasoningTokens: string;
+  debugContextUnknown: string;
+  debugContextPrecisionExact: string;
+  debugContextPrecisionMixed: string;
+  debugContextPrecisionEstimated: string;
+  debugContextPrecisionForcedFull: string;
+  debugContextSourceResponses: string;
+  debugContextSourceChat: string;
+  debugContextSourceEstimate: string;
+  debugContextSourceOverflow: string;
   
   // 确认对话框
   confirmDeleteProvider: string;
@@ -441,6 +462,27 @@ const en: Translations = {
   currentModelNoVision: 'The current model does not support vision. Please enable vision for this model in settings.',
   noModelConfig: 'Please configure an AI provider in settings first',
   notConfigured: 'Not configured',
+  debugContextStatsTitle: 'Context Usage Stats',
+  debugContextStatsEmpty: 'No context usage stats yet',
+  debugContextTokens: 'Current tokens',
+  debugContextWindow: 'Input budget',
+  debugContextRatio: 'Usage ratio',
+  debugContextPrecision: 'Precision',
+  debugContextSource: 'Source',
+  debugContextUpdatedAt: 'Updated',
+  debugContextInputTokens: 'Input tokens',
+  debugContextOutputTokens: 'Output tokens',
+  debugContextCachedInputTokens: 'Cached input',
+  debugContextReasoningTokens: 'Reasoning tokens',
+  debugContextUnknown: 'Unknown',
+  debugContextPrecisionExact: 'Exact',
+  debugContextPrecisionMixed: 'Mixed',
+  debugContextPrecisionEstimated: 'Estimated',
+  debugContextPrecisionForcedFull: 'Forced full',
+  debugContextSourceResponses: 'Responses usage',
+  debugContextSourceChat: 'Chat usage',
+  debugContextSourceEstimate: 'Local estimate',
+  debugContextSourceOverflow: 'Overflow guard',
   
   // 确认对话框
   confirmDeleteProvider: 'Are you sure you want to delete this provider?',
@@ -677,6 +719,27 @@ const zhCN: Translations = {
   currentModelNoVision: '当前模型未开启视觉支持，请在设置中为该模型开启后再上传图片',
   noModelConfig: '请先在设置中配置 AI 服务商',
   notConfigured: '未配置',
+  debugContextStatsTitle: '上下文统计',
+  debugContextStatsEmpty: '暂无上下文统计数据',
+  debugContextTokens: '当前 tokens',
+  debugContextWindow: '可用输入预算',
+  debugContextRatio: '占用比例',
+  debugContextPrecision: '精度',
+  debugContextSource: '来源',
+  debugContextUpdatedAt: '更新时间',
+  debugContextInputTokens: '输入 tokens',
+  debugContextOutputTokens: '输出 tokens',
+  debugContextCachedInputTokens: '缓存输入',
+  debugContextReasoningTokens: '推理 tokens',
+  debugContextUnknown: '未知',
+  debugContextPrecisionExact: '精确',
+  debugContextPrecisionMixed: '混合',
+  debugContextPrecisionEstimated: '估算',
+  debugContextPrecisionForcedFull: '保护置满',
+  debugContextSourceResponses: 'Responses usage',
+  debugContextSourceChat: 'Chat usage',
+  debugContextSourceEstimate: '本地估算',
+  debugContextSourceOverflow: '超窗保护',
   
   // 确认对话框
   confirmDeleteProvider: '确定删除这个服务商吗？',

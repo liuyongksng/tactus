@@ -206,6 +206,53 @@ export interface ApiMessage {
 // 存储最后一次发送给模型的完整上下文（按会话隔离），用于调试
 const DEFAULT_API_CONTEXT_KEY = '__default__';
 const lastApiMessagesBySession = new Map<string, ApiMessage[]>();
+const chatIncludeUsageDisabledProviders = new Set<string>();
+const APPROX_BYTES_PER_TOKEN = 4;
+
+export type ContextUsagePrecision = 'exact' | 'mixed' | 'estimated' | 'forced_full';
+export type ContextUsageSource = 'responses_usage' | 'chat_usage' | 'local_estimate' | 'overflow_guard';
+
+export interface ContextUsageTokenDetails {
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  outputTokens: number | null;
+  reasoningOutputTokens: number | null;
+}
+
+export interface ContextUsageSnapshot {
+  sessionKey: string;
+  exactBaseTokens: number | null;
+  pendingEstimateTokens: number;
+  currentTokensMixed: number;
+  totalTokensAccumulated: number | null;
+  contextWindowTokens: number | null;
+  effectiveContextWindowTokens: number | null;
+  usageRatio: number | null;
+  precision: ContextUsagePrecision;
+  source: ContextUsageSource;
+  lastSettledMessageCount: number;
+  updatedAt: number;
+  tokenDetails: ContextUsageTokenDetails;
+}
+
+interface ContextUsageTokenUsage {
+  totalTokens: number;
+  inputTokens?: number | null;
+  cachedInputTokens?: number | null;
+  outputTokens?: number | null;
+  reasoningOutputTokens?: number | null;
+}
+
+interface ContextUsageUpdateOptions {
+  sessionKey?: string;
+  messages: ApiMessage[];
+  provider: Pick<AIProvider, 'contextWindowTokens' | 'maxOutputTokens'>;
+  source: ContextUsageSource;
+  usage?: ContextUsageTokenUsage;
+  forceFull?: boolean;
+}
+
+const lastContextUsageBySession = new Map<string, ContextUsageSnapshot>();
 
 function resolveApiContextKey(sessionKey?: string): string {
   if (typeof sessionKey !== 'string') return DEFAULT_API_CONTEXT_KEY;
@@ -222,6 +269,277 @@ export function getLastApiMessages(sessionKey?: string): ApiMessage[] {
 export function setLastApiMessages(messages: ApiMessage[], sessionKey?: string) {
   const key = resolveApiContextKey(sessionKey);
   lastApiMessagesBySession.set(key, [...messages]);
+  if (messages.length === 0) {
+    lastContextUsageBySession.delete(key);
+  }
+}
+
+export function clearAllLastApiMessages(): void {
+  lastApiMessagesBySession.clear();
+  lastContextUsageBySession.clear();
+}
+
+function cloneContextUsageTokenDetails(details: ContextUsageTokenDetails): ContextUsageTokenDetails {
+  return {
+    inputTokens: details.inputTokens,
+    cachedInputTokens: details.cachedInputTokens,
+    outputTokens: details.outputTokens,
+    reasoningOutputTokens: details.reasoningOutputTokens,
+  };
+}
+
+function cloneContextUsageSnapshot(snapshot: ContextUsageSnapshot): ContextUsageSnapshot {
+  return {
+    ...snapshot,
+    tokenDetails: cloneContextUsageTokenDetails(snapshot.tokenDetails),
+  };
+}
+
+function normalizeOptionalInt(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const normalized = Math.floor(value);
+  return normalized >= 0 ? normalized : null;
+}
+
+function resolveContextWindowTokens(provider: Pick<AIProvider, 'contextWindowTokens'>): number | null {
+  const value = provider.contextWindowTokens;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : null;
+}
+
+function resolveEffectiveContextWindowTokens(
+  provider: Pick<AIProvider, 'contextWindowTokens' | 'maxOutputTokens'>,
+): number | null {
+  const contextWindowTokens = resolveContextWindowTokens(provider);
+  if (contextWindowTokens === null) return null;
+  const maxOutputTokens = resolveMaxOutputTokens(provider);
+  if (typeof maxOutputTokens !== 'number') {
+    return contextWindowTokens;
+  }
+  return Math.max(1, contextWindowTokens - maxOutputTokens);
+}
+
+function estimateUtf8Bytes(text: string): number {
+  if (!text) return 0;
+  if (typeof TextEncoder !== 'undefined') {
+    return new TextEncoder().encode(text).length;
+  }
+  return text.length;
+}
+
+function estimateContentBytes(content: ApiMessageContent): number {
+  if (content === null || content === undefined) return 0;
+  if (typeof content === 'string') {
+    return estimateUtf8Bytes(content);
+  }
+  let total = 0;
+  for (const part of content) {
+    if (part.type === 'text') {
+      total += estimateUtf8Bytes(part.text);
+      continue;
+    }
+    total += estimateUtf8Bytes(part.image_url.url);
+  }
+  return total;
+}
+
+function estimateMessageBytes(message: ApiMessage): number {
+  let total = estimateUtf8Bytes(message.role) + estimateContentBytes(message.content);
+  if (message.reasoning) {
+    total += estimateUtf8Bytes(message.reasoning);
+  }
+  if (message.tool_calls?.length) {
+    for (const call of message.tool_calls) {
+      total += estimateUtf8Bytes(call.id);
+      total += estimateUtf8Bytes(call.function.name);
+      total += estimateUtf8Bytes(call.function.arguments);
+    }
+  }
+  if (message.tool_call_id) {
+    total += estimateUtf8Bytes(message.tool_call_id);
+  }
+  if (message.name) {
+    total += estimateUtf8Bytes(message.name);
+  }
+  return total;
+}
+
+export function estimateTokensFromApiMessages(messages: ApiMessage[]): number {
+  if (!Array.isArray(messages) || messages.length === 0) return 0;
+  let totalBytes = 0;
+  for (const message of messages) {
+    totalBytes += estimateMessageBytes(message);
+  }
+  return Math.ceil(totalBytes / APPROX_BYTES_PER_TOKEN);
+}
+
+function computeUsageRatio(currentTokens: number, effectiveWindowTokens: number | null): number | null {
+  if (effectiveWindowTokens === null || effectiveWindowTokens <= 0) return null;
+  return currentTokens / effectiveWindowTokens;
+}
+
+function buildProviderUsageCapabilityKey(provider: Pick<AIProvider, 'id' | 'baseUrl' | 'selectedModel'>): string {
+  const baseUrl = typeof provider.baseUrl === 'string' ? provider.baseUrl.trim() : '';
+  const model = typeof provider.selectedModel === 'string' ? provider.selectedModel.trim() : '';
+  return `${provider.id}::${baseUrl}::${model}`;
+}
+
+function shouldEnableChatIncludeUsage(provider: Pick<AIProvider, 'id' | 'baseUrl' | 'selectedModel'>): boolean {
+  const key = buildProviderUsageCapabilityKey(provider);
+  return !chatIncludeUsageDisabledProviders.has(key);
+}
+
+function disableChatIncludeUsage(provider: Pick<AIProvider, 'id' | 'baseUrl' | 'selectedModel'>): void {
+  const key = buildProviderUsageCapabilityKey(provider);
+  chatIncludeUsageDisabledProviders.add(key);
+}
+
+function isChatIncludeUsageUnsupportedError(error: ApiError): boolean {
+  if (error.code !== 'INVALID_REQUEST') return false;
+  const rawMessage = [
+    error.message,
+    error.originalError && typeof error.originalError === 'object'
+      ? String((error.originalError as Record<string, unknown>).message || '')
+      : '',
+  ].join(' ');
+  const normalized = rawMessage.toLowerCase();
+  return (
+    normalized.includes('include_usage')
+    || normalized.includes('stream_options')
+    || normalized.includes('unknown parameter')
+    || normalized.includes('unsupported parameter')
+    || normalized.includes('not support')
+  );
+}
+
+function shouldMarkContextOverflow(error: ApiError): boolean {
+  const rawMessage = [
+    error.message,
+    error.originalError && typeof error.originalError === 'object'
+      ? String((error.originalError as Record<string, unknown>).message || '')
+      : '',
+  ].join(' ');
+  const normalized = rawMessage.toLowerCase();
+  return (
+    normalized.includes('context')
+    && (
+      normalized.includes('window')
+      || normalized.includes('token limit')
+      || normalized.includes('too long')
+      || normalized.includes('maximum context length')
+    )
+  );
+}
+
+export function getLastContextUsage(sessionKey?: string): ContextUsageSnapshot | null {
+  const key = resolveApiContextKey(sessionKey);
+  const snapshot = lastContextUsageBySession.get(key);
+  return snapshot ? cloneContextUsageSnapshot(snapshot) : null;
+}
+
+export function setLastContextUsage(snapshot: ContextUsageSnapshot, sessionKey?: string): ContextUsageSnapshot {
+  const key = resolveApiContextKey(sessionKey || snapshot.sessionKey);
+  const normalized: ContextUsageSnapshot = {
+    ...snapshot,
+    sessionKey: key,
+    exactBaseTokens: normalizeOptionalInt(snapshot.exactBaseTokens),
+    pendingEstimateTokens: Math.max(0, Math.floor(snapshot.pendingEstimateTokens)),
+    currentTokensMixed: Math.max(0, Math.floor(snapshot.currentTokensMixed)),
+    totalTokensAccumulated: normalizeOptionalInt(snapshot.totalTokensAccumulated),
+    contextWindowTokens: normalizeOptionalInt(snapshot.contextWindowTokens),
+    effectiveContextWindowTokens: normalizeOptionalInt(snapshot.effectiveContextWindowTokens),
+    usageRatio: typeof snapshot.usageRatio === 'number' && Number.isFinite(snapshot.usageRatio)
+      ? snapshot.usageRatio
+      : null,
+    lastSettledMessageCount: Math.max(0, Math.floor(snapshot.lastSettledMessageCount)),
+    updatedAt: Number.isFinite(snapshot.updatedAt) ? snapshot.updatedAt : Date.now(),
+    tokenDetails: {
+      inputTokens: normalizeOptionalInt(snapshot.tokenDetails.inputTokens),
+      cachedInputTokens: normalizeOptionalInt(snapshot.tokenDetails.cachedInputTokens),
+      outputTokens: normalizeOptionalInt(snapshot.tokenDetails.outputTokens),
+      reasoningOutputTokens: normalizeOptionalInt(snapshot.tokenDetails.reasoningOutputTokens),
+    },
+  };
+  lastContextUsageBySession.set(key, cloneContextUsageSnapshot(normalized));
+  return cloneContextUsageSnapshot(normalized);
+}
+
+export function clearLastContextUsage(sessionKey?: string): void {
+  const key = resolveApiContextKey(sessionKey);
+  lastContextUsageBySession.delete(key);
+}
+
+function updateContextUsageSnapshot(options: ContextUsageUpdateOptions): ContextUsageSnapshot {
+  const key = resolveApiContextKey(options.sessionKey);
+  const previous = lastContextUsageBySession.get(key);
+  const contextWindowTokens = resolveContextWindowTokens(options.provider);
+  const effectiveContextWindowTokens = resolveEffectiveContextWindowTokens(options.provider);
+
+  const safeMessages = Array.isArray(options.messages) ? options.messages : [];
+  let exactBaseTokens = previous?.exactBaseTokens ?? null;
+  let totalTokensAccumulated = previous?.totalTokensAccumulated ?? null;
+  let lastSettledMessageCount = previous?.lastSettledMessageCount ?? 0;
+  let source: ContextUsageSource = options.source;
+  let tokenDetails: ContextUsageTokenDetails = previous
+    ? cloneContextUsageTokenDetails(previous.tokenDetails)
+    : {
+        inputTokens: null,
+        cachedInputTokens: null,
+        outputTokens: null,
+        reasoningOutputTokens: null,
+      };
+
+  if (options.usage) {
+    exactBaseTokens = Math.max(0, Math.floor(options.usage.totalTokens));
+    totalTokensAccumulated = exactBaseTokens;
+    lastSettledMessageCount = safeMessages.length;
+    tokenDetails = {
+      inputTokens: normalizeOptionalInt(options.usage.inputTokens),
+      cachedInputTokens: normalizeOptionalInt(options.usage.cachedInputTokens),
+      outputTokens: normalizeOptionalInt(options.usage.outputTokens),
+      reasoningOutputTokens: normalizeOptionalInt(options.usage.reasoningOutputTokens),
+    };
+  }
+
+  const normalizedSettled = Math.max(0, Math.min(lastSettledMessageCount, safeMessages.length));
+  const pendingMessages = safeMessages.slice(normalizedSettled);
+  let pendingEstimateTokens = estimateTokensFromApiMessages(pendingMessages);
+  let currentTokensMixed = (exactBaseTokens ?? 0) + pendingEstimateTokens;
+  let precision: ContextUsagePrecision;
+
+  if (options.forceFull) {
+    source = 'overflow_guard';
+    precision = 'forced_full';
+    const fullTokens = effectiveContextWindowTokens ?? contextWindowTokens ?? currentTokensMixed;
+    currentTokensMixed = Math.max(currentTokensMixed, fullTokens);
+    pendingEstimateTokens = Math.max(0, currentTokensMixed - (exactBaseTokens ?? 0));
+  } else if (exactBaseTokens === null) {
+    precision = 'estimated';
+  } else if (pendingEstimateTokens > 0) {
+    precision = 'mixed';
+  } else {
+    precision = 'exact';
+  }
+
+  const snapshot: ContextUsageSnapshot = {
+    sessionKey: key,
+    exactBaseTokens,
+    pendingEstimateTokens,
+    currentTokensMixed,
+    totalTokensAccumulated,
+    contextWindowTokens,
+    effectiveContextWindowTokens,
+    usageRatio: computeUsageRatio(currentTokensMixed, effectiveContextWindowTokens),
+    precision,
+    source,
+    lastSettledMessageCount: normalizedSettled,
+    updatedAt: Date.now(),
+    tokenDetails,
+  };
+
+  lastContextUsageBySession.set(key, cloneContextUsageSnapshot(snapshot));
+  return cloneContextUsageSnapshot(snapshot);
 }
 
 export function rollbackToolIterationMessages(messages: ApiMessage[], rollbackIndex: number): ApiMessage[] {
@@ -303,6 +621,7 @@ export type StreamEvent =
   | { type: 'reasoning'; content: string }  // 思维链内容（如 DeepSeek reasoning_content）
   | { type: 'tool_call'; toolCall: ToolCall }
   | { type: 'tool_result'; result: ToolResult }
+  | { type: 'context_usage'; usage: ContextUsageSnapshot }
   | { type: 'thinking'; message: string }
   | { type: 'error'; error: ApiError; retrying: boolean; attempt: number }
   | { type: 'done' };
@@ -534,9 +853,70 @@ export interface ParsedResponsesStreamEvent {
   contentDelta?: string;
   reasoningDelta?: string;
   webSearchStatus?: 'searching' | 'in_progress' | 'completed';
+  tokenUsage?: ContextUsageTokenUsage;
   toolCallArgumentDelta?: { callId: string; name?: string; delta?: string };
   toolCallDone?: { callId: string; name?: string; arguments?: string };
   toolCallItemDone?: { callId: string; name?: string; arguments?: string };
+}
+
+function parseTokenUsageNumber(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const normalized = Math.floor(value);
+  return normalized >= 0 ? normalized : null;
+}
+
+function parseTokenUsagePayload(usageLike: unknown): ContextUsageTokenUsage | undefined {
+  if (!usageLike || typeof usageLike !== 'object') return undefined;
+  const usage = usageLike as Record<string, unknown>;
+  const totalTokens = parseTokenUsageNumber(usage.total_tokens);
+  if (totalTokens === null) return undefined;
+  return {
+    totalTokens,
+    inputTokens: parseTokenUsageNumber(usage.input_tokens),
+    cachedInputTokens: parseTokenUsageNumber(
+      usage.input_tokens_details
+      && typeof usage.input_tokens_details === 'object'
+      && usage.input_tokens_details !== null
+        ? (usage.input_tokens_details as Record<string, unknown>).cached_tokens
+        : null,
+    ),
+    outputTokens: parseTokenUsageNumber(usage.output_tokens),
+    reasoningOutputTokens: parseTokenUsageNumber(
+      usage.output_tokens_details
+      && typeof usage.output_tokens_details === 'object'
+      && usage.output_tokens_details !== null
+        ? (usage.output_tokens_details as Record<string, unknown>).reasoning_tokens
+        : null,
+    ),
+  };
+}
+
+function parseChatCompletionChunkUsage(chunk: unknown): ContextUsageTokenUsage | undefined {
+  if (!chunk || typeof chunk !== 'object') return undefined;
+  const usage = (chunk as Record<string, unknown>).usage;
+  if (!usage || typeof usage !== 'object') return undefined;
+  const usageRecord = usage as Record<string, unknown>;
+  const totalTokens = parseTokenUsageNumber(usageRecord.total_tokens);
+  if (totalTokens === null) return undefined;
+  return {
+    totalTokens,
+    inputTokens: parseTokenUsageNumber(usageRecord.prompt_tokens),
+    cachedInputTokens: parseTokenUsageNumber(
+      usageRecord.prompt_tokens_details
+      && typeof usageRecord.prompt_tokens_details === 'object'
+      && usageRecord.prompt_tokens_details !== null
+        ? (usageRecord.prompt_tokens_details as Record<string, unknown>).cached_tokens
+        : null,
+    ),
+    outputTokens: parseTokenUsageNumber(usageRecord.completion_tokens),
+    reasoningOutputTokens: parseTokenUsageNumber(
+      usageRecord.completion_tokens_details
+      && typeof usageRecord.completion_tokens_details === 'object'
+      && usageRecord.completion_tokens_details !== null
+        ? (usageRecord.completion_tokens_details as Record<string, unknown>).reasoning_tokens
+        : null,
+    ),
+  };
 }
 
 export function parseResponsesStreamEvent(event: unknown): ParsedResponsesStreamEvent {
@@ -550,6 +930,14 @@ export function parseResponsesStreamEvent(event: unknown): ParsedResponsesStream
     type,
     responseId,
   };
+
+  if (type === 'response.completed' || type === 'response.done') {
+    const usage = parseTokenUsagePayload(evt?.response?.usage ?? evt?.usage);
+    if (usage) {
+      parsed.tokenUsage = usage;
+    }
+    return parsed;
+  }
 
   if (type === 'response.output_text.delta' && typeof evt?.delta === 'string' && evt.delta.length > 0) {
     parsed.contentDelta = evt.delta;
@@ -846,6 +1234,22 @@ async function* streamChatWithChatCompletions(
   }
 
   setLastApiMessages(apiMessages, apiContextSessionKey);
+  const publishContextUsage = (
+    source: ContextUsageSource,
+    snapshotMessages: ApiMessage[],
+    usage?: ContextUsageTokenUsage,
+    forceFull?: boolean,
+  ): ContextUsageSnapshot => {
+    return updateContextUsageSnapshot({
+      sessionKey: apiContextSessionKey,
+      messages: snapshotMessages,
+      provider,
+      source,
+      usage,
+      forceFull,
+    });
+  };
+  yield { type: 'context_usage', usage: publishContextUsage('local_estimate', apiMessages) };
 
   // 获取过滤后的工具列表
   const tools = enableTools ? getFilteredTools(context) : [];
@@ -864,6 +1268,7 @@ async function* streamChatWithChatCompletions(
     // 带重试的 API 调用
     let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
     let lastError: ApiError | null = null;
+    let canTryIncludeUsage = shouldEnableChatIncludeUsage(provider);
     
     for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
       ensureNotAborted();
@@ -886,11 +1291,30 @@ async function* streamChatWithChatCompletions(
         if (typeof maxOutputTokens === 'number') {
           requestBody.max_completion_tokens = maxOutputTokens;
         }
+        if (canTryIncludeUsage) {
+          requestBody.stream_options = { include_usage: true };
+        }
 
-        stream = (await client.chat.completions.create(
-          requestBody as any,
-          requestOptions as any,
-        )) as unknown as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
+        try {
+          stream = (await client.chat.completions.create(
+            requestBody as any,
+            requestOptions as any,
+          )) as unknown as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
+        } catch (firstError) {
+          const firstParsedError = parseError(firstError);
+          if (canTryIncludeUsage && isChatIncludeUsageUnsupportedError(firstParsedError)) {
+            disableChatIncludeUsage(provider);
+            canTryIncludeUsage = false;
+            const fallbackBody = { ...requestBody };
+            delete fallbackBody.stream_options;
+            stream = (await client.chat.completions.create(
+              fallbackBody as any,
+              requestOptions as any,
+            )) as unknown as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
+          } else {
+            throw firstError;
+          }
+        }
         
         clear();
         lastError = null;
@@ -902,6 +1326,12 @@ async function* streamChatWithChatCompletions(
           throw createUserAbortError(error);
         }
         lastError = parseError(error);
+        if (shouldMarkContextOverflow(lastError)) {
+          yield {
+            type: 'context_usage',
+            usage: publishContextUsage('overflow_guard', currentMessages, undefined, true),
+          };
+        }
         
         // 不可重试的错误，直接抛出
         if (!lastError.retryable) {
@@ -940,6 +1370,7 @@ async function* streamChatWithChatCompletions(
     
     let fullContent = '';
     let fullReasoning = '';  // 思维链内容（如 DeepSeek reasoning_content）
+    let currentRoundUsage: ContextUsageTokenUsage | undefined;
     
     // 工具调用收集器
     // 使用 id 作为主键来存储工具调用，这样更健壮
@@ -978,6 +1409,11 @@ async function* streamChatWithChatCompletions(
         }
         
         // 处理工具调用增量
+        const parsedUsage = parseChatCompletionChunkUsage(chunk);
+        if (parsedUsage) {
+          currentRoundUsage = parsedUsage;
+        }
+
         if (delta?.tool_calls) {
           for (const tc of delta.tool_calls) {
             const index = tc.index;
@@ -1112,6 +1548,7 @@ async function* streamChatWithChatCompletions(
         },
       }));
       const toolIterationStartIndex = currentMessages.length;
+      const toolIterationStartUsage = getLastContextUsage(apiContextSessionKey);
 
       currentMessages.push({
         role: 'assistant',
@@ -1122,6 +1559,15 @@ async function* streamChatWithChatCompletions(
       
       // 实时更新 API 上下文（记录 assistant 的 tool_calls）
       setLastApiMessages(currentMessages, apiContextSessionKey);
+      yield {
+        type: 'context_usage',
+        usage: publishContextUsage(
+          currentRoundUsage ? 'chat_usage' : 'local_estimate',
+          currentMessages,
+          currentRoundUsage,
+        ),
+      };
+      currentRoundUsage = undefined;
       
       // 执行每个工具调用
       let hasExecutionError = false;
@@ -1221,12 +1667,28 @@ async function* streamChatWithChatCompletions(
         
         // 实时更新 API 上下文（记录 tool result）
         setLastApiMessages(currentMessages, apiContextSessionKey);
+        yield {
+          type: 'context_usage',
+          usage: publishContextUsage('local_estimate', currentMessages),
+        };
       }
       
       // 如果有执行错误，剔除本次 assistant 消息，重试
       if (hasExecutionError) {
         currentMessages = rollbackToolIterationMessages(currentMessages, toolIterationStartIndex);
         setLastApiMessages(currentMessages, apiContextSessionKey);
+        if (toolIterationStartUsage) {
+          yield {
+            type: 'context_usage',
+            usage: setLastContextUsage(toolIterationStartUsage, apiContextSessionKey),
+          };
+        } else {
+          clearLastContextUsage(apiContextSessionKey);
+          yield {
+            type: 'context_usage',
+            usage: publishContextUsage('local_estimate', currentMessages),
+          };
+        }
         continue;
       }
 
@@ -1247,6 +1709,14 @@ async function* streamChatWithChatCompletions(
       });
     }
     setLastApiMessages(finalMessages, apiContextSessionKey);
+    yield {
+      type: 'context_usage',
+      usage: publishContextUsage(
+        currentRoundUsage ? 'chat_usage' : 'local_estimate',
+        finalMessages,
+        currentRoundUsage,
+      ),
+    };
     break;
   }
   
@@ -1306,6 +1776,22 @@ async function* streamChatWithResponses(
   }
 
   setLastApiMessages(apiMessages, apiContextSessionKey);
+  const publishContextUsage = (
+    source: ContextUsageSource,
+    snapshotMessages: ApiMessage[],
+    usage?: ContextUsageTokenUsage,
+    forceFull?: boolean,
+  ): ContextUsageSnapshot => {
+    return updateContextUsageSnapshot({
+      sessionKey: apiContextSessionKey,
+      messages: snapshotMessages,
+      provider,
+      source,
+      usage,
+      forceFull,
+    });
+  };
+  yield { type: 'context_usage', usage: publishContextUsage('local_estimate', apiMessages) };
 
   const tools = enableTools ? getFilteredTools(context) : [];
   const baseResponseTools = tools.length > 0 ? convertToolsToResponses(tools) : undefined;
@@ -1386,6 +1872,12 @@ async function* streamChatWithResponses(
         }
 
         lastError = parseError(error);
+        if (shouldMarkContextOverflow(lastError)) {
+          yield {
+            type: 'context_usage',
+            usage: publishContextUsage('overflow_guard', currentMessages, undefined, true),
+          };
+        }
         if (!lastError.retryable) {
           yield { type: 'error', error: lastError, retrying: false, attempt };
           throw lastError;
@@ -1418,11 +1910,15 @@ async function* streamChatWithResponses(
     let fullContent = '';
     let fullReasoning = '';
     const toolCallsById: Map<string, { id: string; name: string; arguments: string }> = new Map();
+    let currentRoundUsage: ContextUsageTokenUsage | undefined;
 
     try {
       for await (const event of stream) {
         ensureNotAborted();
         const parsedEvent = parseResponsesStreamEvent(event);
+        if (parsedEvent.tokenUsage) {
+          currentRoundUsage = parsedEvent.tokenUsage;
+        }
         if (parsedEvent.contentDelta) {
           fullContent += parsedEvent.contentDelta;
           yield { type: 'content', content: parsedEvent.contentDelta };
@@ -1554,6 +2050,7 @@ async function* streamChatWithResponses(
         },
       }));
       const toolIterationStartIndex = currentMessages.length;
+      const toolIterationStartUsage = getLastContextUsage(apiContextSessionKey);
 
       currentMessages.push({
         role: 'assistant',
@@ -1562,6 +2059,15 @@ async function* streamChatWithResponses(
         tool_calls: assistantToolCalls,
       });
       setLastApiMessages(currentMessages, apiContextSessionKey);
+      yield {
+        type: 'context_usage',
+        usage: publishContextUsage(
+          currentRoundUsage ? 'responses_usage' : 'local_estimate',
+          currentMessages,
+          currentRoundUsage,
+        ),
+      };
+      currentRoundUsage = undefined;
 
       let hasExecutionError = false;
       for (const tc of toolCalls) {
@@ -1640,11 +2146,27 @@ async function* streamChatWithResponses(
           name: tc.name,
         });
         setLastApiMessages(currentMessages, apiContextSessionKey);
+        yield {
+          type: 'context_usage',
+          usage: publishContextUsage('local_estimate', currentMessages),
+        };
       }
 
       if (hasExecutionError) {
         currentMessages = rollbackToolIterationMessages(currentMessages, toolIterationStartIndex);
         setLastApiMessages(currentMessages, apiContextSessionKey);
+        if (toolIterationStartUsage) {
+          yield {
+            type: 'context_usage',
+            usage: setLastContextUsage(toolIterationStartUsage, apiContextSessionKey),
+          };
+        } else {
+          clearLastContextUsage(apiContextSessionKey);
+          yield {
+            type: 'context_usage',
+            usage: publishContextUsage('local_estimate', currentMessages),
+          };
+        }
         continue;
       }
 
@@ -1662,6 +2184,14 @@ async function* streamChatWithResponses(
       });
     }
     setLastApiMessages(finalMessages, apiContextSessionKey);
+    yield {
+      type: 'context_usage',
+      usage: publishContextUsage(
+        currentRoundUsage ? 'responses_usage' : 'local_estimate',
+        finalMessages,
+        currentRoundUsage,
+      ),
+    };
     break;
   }
 
@@ -1716,6 +2246,11 @@ export async function* streamChatSimple(
   ];
 
   setLastApiMessages(apiMessages);
+  updateContextUsageSnapshot({
+    messages: apiMessages,
+    provider,
+    source: 'local_estimate',
+  });
 
   // 带重试的 API 调用
   let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;

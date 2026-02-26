@@ -304,6 +304,36 @@ describe('chatSessions CRUD 与分页', () => {
     expect((stored?.updatedAt ?? 0) >= updatedAtBefore).toBe(true);
   });
 
+  it('updateSession 应持久化会话级 contextUsage 统计', async () => {
+    const session = await createSession('provider-context');
+
+    session.contextUsage = {
+      sessionKey: session.id,
+      exactBaseTokens: 120,
+      pendingEstimateTokens: 16,
+      currentTokensMixed: 136,
+      totalTokensAccumulated: 120,
+      contextWindowTokens: 32768,
+      effectiveContextWindowTokens: 31129,
+      usageRatio: 136 / 31129,
+      precision: 'mixed',
+      source: 'responses_usage',
+      lastSettledMessageCount: 4,
+      updatedAt: 1234567890,
+      tokenDetails: {
+        inputTokens: 90,
+        cachedInputTokens: 20,
+        outputTokens: 30,
+        reasoningOutputTokens: 5,
+      },
+    };
+
+    await updateSession(session);
+    const stored = await getSession(session.id);
+
+    expect(stored?.contextUsage).toEqual(session.contextUsage);
+  });
+
   it('getSessionsPaginated 应按更新时间倒序分页', async () => {
     const nowSpy = vi.spyOn(Date, 'now');
     nowSpy

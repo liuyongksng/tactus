@@ -113,11 +113,33 @@ export interface ApiMessageRecord {
   name?: string;
 }
 
+export interface SessionContextUsageSnapshot {
+  sessionKey: string;
+  exactBaseTokens: number | null;
+  pendingEstimateTokens: number;
+  currentTokensMixed: number;
+  totalTokensAccumulated: number | null;
+  contextWindowTokens: number | null;
+  effectiveContextWindowTokens: number | null;
+  usageRatio: number | null;
+  precision: 'exact' | 'mixed' | 'estimated' | 'forced_full';
+  source: 'responses_usage' | 'chat_usage' | 'local_estimate' | 'overflow_guard';
+  lastSettledMessageCount: number;
+  updatedAt: number;
+  tokenDetails: {
+    inputTokens: number | null;
+    cachedInputTokens: number | null;
+    outputTokens: number | null;
+    reasoningOutputTokens: number | null;
+  };
+}
+
 export interface ChatSession {
   id: string;
   title: string;
   messages: ChatMessage[];
   apiMessages?: ApiMessageRecord[];
+  contextUsage?: SessionContextUsageSnapshot;
   createdAt: number;
   updatedAt: number;
   providerId?: string;

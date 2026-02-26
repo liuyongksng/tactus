@@ -7,7 +7,11 @@ import {
   buildSystemMessage,
   buildResponsesInput,
   buildSessionHeaders,
+  estimateTokensFromApiMessages,
   resolveMaxOutputTokens,
+  getLastContextUsage,
+  setLastContextUsage,
+  clearAllLastApiMessages,
   getLastApiMessages,
   parseResponsesStreamEvent,
   rollbackToolIterationMessages,
@@ -170,6 +174,70 @@ describe('lastApiMessages 会话隔离', () => {
 
     expect(getLastApiMessages()).toEqual(defaultMessages);
   });
+
+  it('clearAllLastApiMessages 应清空所有会话的上下文与统计快照', () => {
+    const sessionA = 'session-clear-all-a';
+    const sessionB = 'session-clear-all-b';
+
+    setLastApiMessages([{ role: 'system', content: 'A' }], sessionA);
+    setLastApiMessages([{ role: 'system', content: 'B' }], sessionB);
+    setLastContextUsage({
+      sessionKey: sessionA,
+      exactBaseTokens: 12,
+      pendingEstimateTokens: 0,
+      currentTokensMixed: 12,
+      totalTokensAccumulated: 12,
+      contextWindowTokens: 1000,
+      effectiveContextWindowTokens: 950,
+      usageRatio: 12 / 950,
+      precision: 'exact',
+      source: 'responses_usage',
+      lastSettledMessageCount: 1,
+      updatedAt: Date.now(),
+      tokenDetails: {
+        inputTokens: 10,
+        cachedInputTokens: 2,
+        outputTokens: 2,
+        reasoningOutputTokens: 0,
+      },
+    }, sessionA);
+
+    clearAllLastApiMessages();
+
+    expect(getLastApiMessages(sessionA)).toEqual([]);
+    expect(getLastApiMessages(sessionB)).toEqual([]);
+    expect(getLastContextUsage(sessionA)).toBeNull();
+    expect(getLastContextUsage(sessionB)).toBeNull();
+  });
+
+  it('清空会话上下文时应同步清空上下文统计快照', () => {
+    const sessionKey = 'session-clear-usage';
+    setLastContextUsage({
+      sessionKey,
+      exactBaseTokens: 120,
+      pendingEstimateTokens: 0,
+      currentTokensMixed: 120,
+      totalTokensAccumulated: 120,
+      contextWindowTokens: 200000,
+      effectiveContextWindowTokens: 190000,
+      usageRatio: 120 / 190000,
+      precision: 'exact',
+      source: 'responses_usage',
+      lastSettledMessageCount: 1,
+      updatedAt: Date.now(),
+      tokenDetails: {
+        inputTokens: 90,
+        cachedInputTokens: 20,
+        outputTokens: 30,
+        reasoningOutputTokens: 5,
+      },
+    }, sessionKey);
+    setLastApiMessages([{ role: 'system', content: 'system' }], sessionKey);
+    expect(getLastContextUsage(sessionKey)).not.toBeNull();
+
+    setLastApiMessages([], sessionKey);
+    expect(getLastContextUsage(sessionKey)).toBeNull();
+  });
 });
 
 describe('rollbackToolIterationMessages', () => {
@@ -277,6 +345,78 @@ describe('parseResponsesStreamEvent', () => {
 
     expect(parsed.responseId).toBe('resp_search_1');
     expect(parsed.webSearchStatus).toBe('searching');
+  });
+
+  it('应解析 response.completed 里的 usage 字段', () => {
+    const parsed = parseResponsesStreamEvent({
+      type: 'response.completed',
+      response: {
+        id: 'resp_usage_1',
+        usage: {
+          input_tokens: 120,
+          input_tokens_details: {
+            cached_tokens: 40,
+          },
+          output_tokens: 30,
+          output_tokens_details: {
+            reasoning_tokens: 5,
+          },
+          total_tokens: 150,
+        },
+      },
+    });
+
+    expect(parsed.responseId).toBe('resp_usage_1');
+    expect(parsed.tokenUsage).toEqual({
+      totalTokens: 150,
+      inputTokens: 120,
+      cachedInputTokens: 40,
+      outputTokens: 30,
+      reasoningOutputTokens: 5,
+    });
+  });
+
+  it('应在 usage 缺失时保持兼容不抛错', () => {
+    const parsed = parseResponsesStreamEvent({
+      type: 'response.done',
+      response: {
+        id: 'resp_usage_missing',
+      },
+    });
+    expect(parsed.responseId).toBe('resp_usage_missing');
+    expect(parsed.tokenUsage).toBeUndefined();
+  });
+});
+
+describe('estimateTokensFromApiMessages', () => {
+  it('应在输入为空时返回 0', () => {
+    expect(estimateTokensFromApiMessages([])).toBe(0);
+  });
+
+  it('应稳定估算文本与工具调用消息', () => {
+    const messages: ApiMessage[] = [
+      { role: 'system', content: 'system prompt' },
+      { role: 'user', content: 'hello world' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'call_1',
+            type: 'function',
+            function: {
+              name: 'extract_page_content',
+              arguments: '{"limit":10}',
+            },
+          },
+        ],
+      },
+    ];
+
+    const estimate1 = estimateTokensFromApiMessages(messages);
+    const estimate2 = estimateTokensFromApiMessages(messages);
+    expect(estimate1).toBeGreaterThan(0);
+    expect(estimate2).toBe(estimate1);
   });
 });
 
