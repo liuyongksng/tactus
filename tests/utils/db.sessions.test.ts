@@ -334,6 +334,26 @@ describe('chatSessions CRUD 与分页', () => {
     expect(stored?.contextUsage).toEqual(session.contextUsage);
   });
 
+  it('updateSession 应持久化会话级 compressionMeta', async () => {
+    const session = await createSession('provider-compression');
+
+    session.compressionMeta = {
+      trigger: 'pre-turn',
+      beforeTokens: 32000,
+      afterTokens: 8400,
+      trimmedCount: 18,
+      usedFallback: false,
+      summaryPreview: '历史关键信息摘要',
+      compactionCountInTurn: 1,
+      updatedAt: 1234567900,
+    };
+
+    await updateSession(session);
+    const stored = await getSession(session.id);
+
+    expect(stored?.compressionMeta).toEqual(session.compressionMeta);
+  });
+
   it('getSessionsPaginated 应按更新时间倒序分页', async () => {
     const nowSpy = vi.spyOn(Date, 'now');
     nowSpy

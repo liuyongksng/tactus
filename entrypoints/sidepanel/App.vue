@@ -26,6 +26,7 @@ import {
   watchMaxPdfExtractPages,
   getMaxToolCalls,
   watchMaxToolCalls,
+  getLocalContextCompressionSettings,
   getRawExtractSites,
   isRawExtractSite,
   isVisionSupportedForModel,
@@ -61,11 +62,22 @@ import {
   getLastContextUsage,
   setLastContextUsage,
   clearLastContextUsage,
+  getLastContextCompaction,
+  setLastContextCompaction,
+  clearLastContextCompaction,
+  estimateTokensFromApiMessages,
   ApiError,
   type ToolExecutor,
   type ApiMessage,
+  type ContextCompactionMeta,
   type ContextUsageSnapshot,
 } from '../../utils/api';
+import {
+  compactHistoryLocally,
+  fallbackTrimHistory,
+  resolveAutoCompactLimit,
+  shouldCompactPreTurn,
+} from '../../utils/localCompression';
 import { extractPageContent, truncateContent } from '../../utils/pageExtractor';
 import {
   clearPdfExtractorRuntimeCache,
@@ -179,6 +191,7 @@ const showModelSelector = ref(false);
 const showDebugModal = ref(false);
 const debugApiMessages = ref<ApiMessage[]>([]);
 const debugContextUsage = ref<ContextUsageSnapshot | null>(null);
+const debugContextCompaction = ref<ContextCompactionMeta | null>(null);
 
 function getLatestApiMessagesForSession(sessionId: string): ApiMessage[] {
   const memoryApiMessages = getLastApiMessages(sessionId);
@@ -207,6 +220,24 @@ function getLatestContextUsageForSession(sessionId: string): ContextUsageSnapsho
     return null;
   }
   return setLastContextUsage(persistedUsage, sessionId);
+}
+
+function getLatestContextCompactionForSession(sessionId: string): ContextCompactionMeta | null {
+  const memoryMeta = getLastContextCompaction(sessionId);
+  if (memoryMeta) {
+    return memoryMeta;
+  }
+
+  const persistedMeta = (
+    currentSession.value?.id === sessionId
+      ? currentSession.value.compressionMeta
+      : sessions.value.find(session => session.id === sessionId)?.compressionMeta
+  ) ?? null;
+
+  if (!persistedMeta) {
+    return null;
+  }
+  return setLastContextCompaction(persistedMeta, sessionId);
 }
 
 function formatDebugUsageRatio(usageRatio: number | null): string {
@@ -253,6 +284,23 @@ function getContextSourceLabel(source: ContextUsageSnapshot['source']): string {
     default:
       return source;
   }
+}
+
+function getCompactionTriggerLabel(trigger: ContextCompactionMeta['trigger']): string {
+  switch (trigger) {
+    case 'pre-turn':
+      return i18n('debugCompactionTriggerPreTurn');
+    case 'mid-turn':
+      return i18n('debugCompactionTriggerMidTurn');
+    case 'model-switch':
+      return i18n('debugCompactionTriggerModelSwitch');
+    default:
+      return trigger;
+  }
+}
+
+function getCompactionBooleanLabel(value: boolean): string {
+  return value ? i18n('debugCompactionYes') : i18n('debugCompactionNo');
 }
 
 // 思维链折叠状态（按稳定消息 key 存储）
@@ -556,12 +604,15 @@ async function saveEditMessage(): Promise<void> {
   // 更新 API 上下文为截取后的版本
   setLastApiMessages(truncatedApiMessages, sessionId);
   clearLastContextUsage(sessionId);
+  clearLastContextCompaction(sessionId);
   debugContextUsage.value = null;
+  debugContextCompaction.value = null;
   
   // 同时更新会话中保存的 apiMessages
   if (currentSession.value) {
     currentSession.value.apiMessages = truncatedApiMessages;
     currentSession.value.contextUsage = undefined;
+    currentSession.value.compressionMeta = undefined;
   }
   
   // 清空编辑状态
@@ -598,12 +649,21 @@ async function regenerateResponse(): Promise<void> {
     scrollToBottom();
     
     // 使用 ReAct 范式的流式聊天
+    const localCompression = await getLocalContextCompressionSettings();
     const reactConfig = {
       enableTools: true,
       toolExecutor,
       maxIterations: 10,
       maxToolCalls: maxToolCalls.value,
       abortSignal: activeAbortController.signal,
+      localCompression: {
+        enabled: localCompression.enabled,
+        autoCompactTokenLimit: localCompression.autoCompactTokenLimit,
+        keepRecentUserTokens: localCompression.keepRecentUserTokens,
+        summaryMaxTokens: localCompression.summaryMaxTokens,
+        compactPrompt: localCompression.compactPrompt,
+        maxCompactionsPerTurn: localCompression.maxCompactionsPerTurn,
+      },
     };
     
     // 构建 Skills 信息
@@ -686,6 +746,12 @@ async function regenerateResponse(): Promise<void> {
             if (currentSession.value?.id === sessionId) {
               currentSession.value.contextUsage = event.usage;
             }
+          }
+          break;
+        case 'context_compaction':
+          debugContextCompaction.value = event.meta;
+          if (currentSession.value?.id === sessionId) {
+            currentSession.value.compressionMeta = event.meta;
           }
           break;
         case 'done':
@@ -1706,21 +1772,103 @@ ${skill.references.length > 0
   }
 };
 
+function resolveEffectiveContextWindowTokensForProvider(
+  provider: Pick<AIProvider, 'contextWindowTokens' | 'maxOutputTokens'>,
+): number | null {
+  const contextWindowTokens =
+    typeof provider.contextWindowTokens === 'number' && Number.isFinite(provider.contextWindowTokens)
+      ? Math.floor(provider.contextWindowTokens)
+      : null;
+  if (contextWindowTokens === null || contextWindowTokens <= 0) {
+    return null;
+  }
+  const maxOutputTokens =
+    typeof provider.maxOutputTokens === 'number' && Number.isFinite(provider.maxOutputTokens)
+      ? Math.floor(provider.maxOutputTokens)
+      : null;
+  if (maxOutputTokens === null || maxOutputTokens <= 0) {
+    return contextWindowTokens;
+  }
+  return Math.max(1, contextWindowTokens - maxOutputTokens);
+}
+
+async function maybeCompactHistoryForModelSwitch(targetProvider: AIProvider): Promise<void> {
+  if (!currentSession.value) return;
+  const sessionId = currentSession.value.id;
+  const currentApiMessages = getLatestApiMessagesForSession(sessionId);
+  if (currentApiMessages.length <= 1) return;
+
+  const localCompression = await getLocalContextCompressionSettings();
+  if (!localCompression.enabled) return;
+
+  const { computedLimit } = resolveAutoCompactLimit({
+    contextWindowTokens: targetProvider.contextWindowTokens,
+    effectiveContextWindowTokens: resolveEffectiveContextWindowTokensForProvider(targetProvider),
+    userConfiguredLimit: localCompression.autoCompactTokenLimit,
+  });
+  const currentTokens = estimateTokensFromApiMessages(currentApiMessages);
+  if (!shouldCompactPreTurn(currentTokens, computedLimit)) return;
+
+  let compacted = compactHistoryLocally({
+    messages: currentApiMessages,
+    trigger: 'model-switch',
+    keepRecentUserTokens: localCompression.keepRecentUserTokens,
+    summaryMaxTokens: localCompression.summaryMaxTokens,
+    compactPrompt: localCompression.compactPrompt,
+    estimateTokens: estimateTokensFromApiMessages,
+    compactionCountInTurn: 1,
+  });
+  if (computedLimit !== null && estimateTokensFromApiMessages(compacted.nextMessages) > computedLimit) {
+    compacted = fallbackTrimHistory({
+      messages: currentApiMessages,
+      tokenLimit: computedLimit,
+      trigger: 'model-switch',
+      estimateTokens: estimateTokensFromApiMessages,
+      compactionCountInTurn: 1,
+    });
+  }
+
+  setLastApiMessages(compacted.nextMessages, sessionId);
+  clearLastContextUsage(sessionId);
+  debugContextUsage.value = null;
+  const persistedMeta = setLastContextCompaction(compacted.meta, sessionId);
+  debugContextCompaction.value = persistedMeta;
+
+  if (currentSession.value?.id === sessionId) {
+    currentSession.value.apiMessages = JSON.parse(JSON.stringify(compacted.nextMessages));
+    currentSession.value.contextUsage = undefined;
+    currentSession.value.compressionMeta = JSON.parse(JSON.stringify(persistedMeta));
+  }
+
+  const compactedStatusText = `${i18n('debugCompactionTriggerModelSwitch')}：${i18n('debugCompactionTrimmed')}${persistedMeta.trimmedCount}`;
+  toolStatus.value = compactedStatusText;
+  setTimeout(() => {
+    if (toolStatus.value === compactedStatusText) {
+      toolStatus.value = null;
+    }
+  }, 2500);
+
+  await saveCurrentSession();
+}
+
 // Save current session
 async function saveCurrentSession() {
   if (!currentSession.value) return;
   const sessionId = currentSession.value.id;
   const latestApiMessages = getLatestApiMessagesForSession(sessionId);
   const latestContextUsage = getLatestContextUsageForSession(sessionId);
+  const latestCompactionMeta = getLatestContextCompactionForSession(sessionId);
   const sessionToSave: ChatSession = {
     ...currentSession.value,
     messages: JSON.parse(JSON.stringify(messages.value)),
     apiMessages: JSON.parse(JSON.stringify(latestApiMessages)), // 持久化 API 上下文
     contextUsage: latestContextUsage ? JSON.parse(JSON.stringify(latestContextUsage)) : undefined, // 持久化上下文统计
+    compressionMeta: latestCompactionMeta ? JSON.parse(JSON.stringify(latestCompactionMeta)) : undefined,
   };
   await updateSession(sessionToSave);
   currentSession.value.apiMessages = sessionToSave.apiMessages;
   currentSession.value.contextUsage = sessionToSave.contextUsage;
+  currentSession.value.compressionMeta = sessionToSave.compressionMeta;
   // 刷新当前已加载的会话列表
   await loadInitialSessions();
 }
@@ -1828,12 +1976,21 @@ async function sendMessage() {
     triggerRef(messages);
 
     // 使用 ReAct 范式的流式聊天
+    const localCompression = await getLocalContextCompressionSettings();
     const reactConfig = {
       enableTools: true, // 默认启用工具
       toolExecutor,
       maxIterations: 10,
       maxToolCalls: maxToolCalls.value,
       abortSignal: activeAbortController.signal,
+      localCompression: {
+        enabled: localCompression.enabled,
+        autoCompactTokenLimit: localCompression.autoCompactTokenLimit,
+        keepRecentUserTokens: localCompression.keepRecentUserTokens,
+        summaryMaxTokens: localCompression.summaryMaxTokens,
+        compactPrompt: localCompression.compactPrompt,
+        maxCompactionsPerTurn: localCompression.maxCompactionsPerTurn,
+      },
     };
 
     // 构建 Skills 信息
@@ -1919,6 +2076,12 @@ async function sendMessage() {
             if (currentSession.value?.id === sessionId) {
               currentSession.value.contextUsage = event.usage;
             }
+          }
+          break;
+        case 'context_compaction':
+          debugContextCompaction.value = event.meta;
+          if (currentSession.value?.id === sessionId) {
+            currentSession.value.compressionMeta = event.meta;
           }
           break;
         case 'done':
@@ -2008,8 +2171,10 @@ async function newChat() {
   if (previousSessionId) {
     setLastApiMessages([], previousSessionId); // 清空当前会话的 API 上下文
     clearLastContextUsage(previousSessionId);
+    clearLastContextCompaction(previousSessionId);
   }
   debugContextUsage.value = null;
+  debugContextCompaction.value = null;
   pendingImages.value = [];
   isImageDragActive.value = false;
   showHistory.value = false;
@@ -2031,7 +2196,13 @@ async function loadSession(session: ChatSession) {
   } else {
     setLastApiMessages([], session.id);
   }
+  if (session.compressionMeta) {
+    setLastContextCompaction(session.compressionMeta, session.id);
+  } else {
+    clearLastContextCompaction(session.id);
+  }
   debugContextUsage.value = getLatestContextUsageForSession(session.id);
+  debugContextCompaction.value = getLatestContextCompactionForSession(session.id);
   await setCurrentSessionId(session.id);
   showHistory.value = false;
   scrollToBottom();
@@ -2044,6 +2215,7 @@ async function removeSession(id: string, e: Event) {
     await deleteSession(id);
     setLastApiMessages([], id);
     clearLastContextUsage(id);
+    clearLastContextCompaction(id);
     sessions.value = await getAllSessions();
     if (currentSession.value?.id === id) {
       if (sessions.value.length > 0) {
@@ -2052,6 +2224,7 @@ async function removeSession(id: string, e: Event) {
         currentSession.value = null;
         messages.value = [];
         debugContextUsage.value = null;
+        debugContextCompaction.value = null;
       }
     }
   }
@@ -2068,6 +2241,7 @@ async function removeAllSessions() {
   currentSession.value = null;
   messages.value = [];
   debugContextUsage.value = null;
+  debugContextCompaction.value = null;
   pendingImages.value = [];
   pendingQuote.value = null;
   isImageDragActive.value = false;
@@ -2135,6 +2309,16 @@ async function selectProviderModel(providerId: string, model: string) {
   
   // 只有当模型确实改变时才保存
   if (freshProvider.selectedModel !== model) {
+    const targetProvider: AIProvider = {
+      ...freshProvider,
+      selectedModel: model,
+    };
+    try {
+      await maybeCompactHistoryForModelSwitch(targetProvider);
+    } catch (error) {
+      console.warn('[model-switch] 预压缩失败，继续切换模型:', error);
+    }
+
     freshProvider.selectedModel = model;
     const supportedEfforts = getReasoningEffortsForModel(model);
     if (!supportedEfforts.includes(freshProvider.responsesReasoningEffort)) {
@@ -2216,6 +2400,7 @@ function viewDebugMessages() {
   const sessionId = currentSession.value?.id;
   const memoryApiMessages = sessionId ? getLastApiMessages(sessionId) : [];
   const memoryContextUsage = sessionId ? getLatestContextUsageForSession(sessionId) : null;
+  const memoryCompactionMeta = sessionId ? getLatestContextCompactionForSession(sessionId) : null;
   if (memoryApiMessages.length > 0) {
     debugApiMessages.value = memoryApiMessages;
   } else if (currentSession.value?.apiMessages?.length) {
@@ -2224,6 +2409,7 @@ function viewDebugMessages() {
     debugApiMessages.value = [];
   }
   debugContextUsage.value = memoryContextUsage;
+  debugContextCompaction.value = memoryCompactionMeta;
   showDebugModal.value = true;
   
   // 启动实时刷新（每 500ms 更新一次）
@@ -2236,10 +2422,12 @@ function viewDebugMessages() {
     // 始终从内存获取最新数据
     const latestApiMessages = getLastApiMessages(currentId);
     const latestContextUsage = getLatestContextUsageForSession(currentId);
+    const latestCompactionMeta = getLatestContextCompactionForSession(currentId);
     if (latestApiMessages.length > 0) {
       debugApiMessages.value = latestApiMessages;
     }
     debugContextUsage.value = latestContextUsage;
+    debugContextCompaction.value = latestCompactionMeta;
   }, 500);
 }
 
@@ -2256,6 +2444,7 @@ function closeDebugModal() {
 function copyDebugMessages() {
   const payload = {
     contextUsage: debugContextUsage.value,
+    compressionMeta: debugContextCompaction.value,
     apiMessages: debugApiMessages.value,
   };
   const text = JSON.stringify(payload, null, 2);
@@ -2806,6 +2995,42 @@ function rejectScript() {
               </div>
             </template>
             <div v-else class="debug-usage-empty">{{ i18n('debugContextStatsEmpty') }}</div>
+          </div>
+          <div class="debug-usage-card">
+            <div class="debug-usage-title">{{ i18n('debugCompactionTitle') }}</div>
+            <template v-if="debugContextCompaction">
+              <div class="debug-usage-grid">
+                <div class="debug-usage-item">
+                  <span class="debug-usage-label">{{ i18n('debugCompactionTrigger') }}</span>
+                  <span class="debug-usage-value">{{ getCompactionTriggerLabel(debugContextCompaction.trigger) }}</span>
+                </div>
+                <div class="debug-usage-item">
+                  <span class="debug-usage-label">{{ i18n('debugCompactionBeforeTokens') }}</span>
+                  <span class="debug-usage-value">{{ debugContextCompaction.beforeTokens }}</span>
+                </div>
+                <div class="debug-usage-item">
+                  <span class="debug-usage-label">{{ i18n('debugCompactionAfterTokens') }}</span>
+                  <span class="debug-usage-value">{{ debugContextCompaction.afterTokens }}</span>
+                </div>
+                <div class="debug-usage-item">
+                  <span class="debug-usage-label">{{ i18n('debugCompactionTrimmed') }}</span>
+                  <span class="debug-usage-value">{{ debugContextCompaction.trimmedCount }}</span>
+                </div>
+                <div class="debug-usage-item">
+                  <span class="debug-usage-label">{{ i18n('debugCompactionFallback') }}</span>
+                  <span class="debug-usage-value">{{ getCompactionBooleanLabel(debugContextCompaction.usedFallback) }}</span>
+                </div>
+                <div class="debug-usage-item">
+                  <span class="debug-usage-label">{{ i18n('debugCompactionCount') }}</span>
+                  <span class="debug-usage-value">{{ debugContextCompaction.compactionCountInTurn }}</span>
+                </div>
+                <div class="debug-usage-item">
+                  <span class="debug-usage-label">{{ i18n('debugCompactionUpdatedAt') }}</span>
+                  <span class="debug-usage-value">{{ formatDebugUsageTime(debugContextCompaction.updatedAt) }}</span>
+                </div>
+              </div>
+            </template>
+            <div v-else class="debug-usage-empty">{{ i18n('debugCompactionEmpty') }}</div>
           </div>
           <div v-if="debugApiMessages.length === 0" class="empty-history">
             暂无 API 消息记录，请先发送一条消息

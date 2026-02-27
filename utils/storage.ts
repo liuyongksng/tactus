@@ -44,6 +44,24 @@ export interface TrustedScript {
   trustedAt: number;
 }
 
+export interface LocalContextCompressionSettings {
+  enabled: boolean;
+  autoCompactTokenLimit: number | null;
+  keepRecentUserTokens: number;
+  summaryMaxTokens: number;
+  compactPrompt: string | null;
+  maxCompactionsPerTurn: number;
+}
+
+const DEFAULT_LOCAL_CONTEXT_COMPRESSION_SETTINGS: LocalContextCompressionSettings = {
+  enabled: true,
+  autoCompactTokenLimit: null,
+  keepRecentUserTokens: 4096,
+  summaryMaxTokens: 256,
+  compactPrompt: null,
+  maxCompactionsPerTurn: 2,
+};
+
 // ==================== Storage Items ====================
 
 const providersStorage = storage.defineItem<AIProvider[]>('local:providers', {
@@ -56,6 +74,30 @@ const activeProviderIdStorage = storage.defineItem<string | null>('local:activeP
 
 const trustedScriptsStorage = storage.defineItem<TrustedScript[]>('local:trustedScripts', {
   fallback: [],
+});
+
+const localContextCompressionEnabledStorage = storage.defineItem<boolean>('local:localContextCompressionEnabled', {
+  fallback: DEFAULT_LOCAL_CONTEXT_COMPRESSION_SETTINGS.enabled,
+});
+
+const localContextAutoCompactTokenLimitStorage = storage.defineItem<number | null>('local:localContextAutoCompactTokenLimit', {
+  fallback: DEFAULT_LOCAL_CONTEXT_COMPRESSION_SETTINGS.autoCompactTokenLimit,
+});
+
+const localContextKeepRecentUserTokensStorage = storage.defineItem<number>('local:localContextKeepRecentUserTokens', {
+  fallback: DEFAULT_LOCAL_CONTEXT_COMPRESSION_SETTINGS.keepRecentUserTokens,
+});
+
+const localContextCompressionSummaryMaxTokensStorage = storage.defineItem<number>('local:localContextCompressionSummaryMaxTokens', {
+  fallback: DEFAULT_LOCAL_CONTEXT_COMPRESSION_SETTINGS.summaryMaxTokens,
+});
+
+const localContextCompactPromptStorage = storage.defineItem<string | null>('local:localContextCompactPrompt', {
+  fallback: DEFAULT_LOCAL_CONTEXT_COMPRESSION_SETTINGS.compactPrompt,
+});
+
+const localContextMaxCompactionsPerTurnStorage = storage.defineItem<number>('local:localContextMaxCompactionsPerTurn', {
+  fallback: DEFAULT_LOCAL_CONTEXT_COMPRESSION_SETTINGS.maxCompactionsPerTurn,
 });
 
 function createSerializedMutationQueue() {
@@ -364,6 +406,85 @@ export function watchMaxToolCalls(callback: (value: number) => void): () => void
   return maxToolCallsStorage.watch((newValue) => {
     callback(normalizePositiveInt(newValue, DEFAULT_MAX_TOOL_CALLS));
   });
+}
+
+function normalizeLocalCompressionOptionalPositiveInt(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const normalized = Math.floor(value);
+  return normalized > 0 ? normalized : null;
+}
+
+function normalizeLocalCompressionPrompt(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+export async function getLocalContextCompressionSettings(): Promise<LocalContextCompressionSettings> {
+  const [
+    enabled,
+    autoCompactTokenLimit,
+    keepRecentUserTokens,
+    summaryMaxTokens,
+    compactPrompt,
+    maxCompactionsPerTurn,
+  ] = await Promise.all([
+    localContextCompressionEnabledStorage.getValue(),
+    localContextAutoCompactTokenLimitStorage.getValue(),
+    localContextKeepRecentUserTokensStorage.getValue(),
+    localContextCompressionSummaryMaxTokensStorage.getValue(),
+    localContextCompactPromptStorage.getValue(),
+    localContextMaxCompactionsPerTurnStorage.getValue(),
+  ]);
+
+  return {
+    enabled: Boolean(enabled),
+    autoCompactTokenLimit: normalizeLocalCompressionOptionalPositiveInt(autoCompactTokenLimit),
+    keepRecentUserTokens: normalizeNonNegativeInt(
+      typeof keepRecentUserTokens === 'number' ? keepRecentUserTokens : NaN,
+      DEFAULT_LOCAL_CONTEXT_COMPRESSION_SETTINGS.keepRecentUserTokens,
+    ),
+    summaryMaxTokens: normalizePositiveInt(
+      typeof summaryMaxTokens === 'number' ? summaryMaxTokens : NaN,
+      DEFAULT_LOCAL_CONTEXT_COMPRESSION_SETTINGS.summaryMaxTokens,
+    ),
+    compactPrompt: normalizeLocalCompressionPrompt(compactPrompt),
+    maxCompactionsPerTurn: normalizePositiveInt(
+      typeof maxCompactionsPerTurn === 'number' ? maxCompactionsPerTurn : NaN,
+      DEFAULT_LOCAL_CONTEXT_COMPRESSION_SETTINGS.maxCompactionsPerTurn,
+    ),
+  };
+}
+
+export async function setLocalContextCompressionSettings(
+  settings: LocalContextCompressionSettings,
+): Promise<void> {
+  const normalized: LocalContextCompressionSettings = {
+    enabled: Boolean(settings.enabled),
+    autoCompactTokenLimit: normalizeLocalCompressionOptionalPositiveInt(settings.autoCompactTokenLimit),
+    keepRecentUserTokens: normalizeNonNegativeInt(
+      settings.keepRecentUserTokens,
+      DEFAULT_LOCAL_CONTEXT_COMPRESSION_SETTINGS.keepRecentUserTokens,
+    ),
+    summaryMaxTokens: normalizePositiveInt(
+      settings.summaryMaxTokens,
+      DEFAULT_LOCAL_CONTEXT_COMPRESSION_SETTINGS.summaryMaxTokens,
+    ),
+    compactPrompt: normalizeLocalCompressionPrompt(settings.compactPrompt),
+    maxCompactionsPerTurn: normalizePositiveInt(
+      settings.maxCompactionsPerTurn,
+      DEFAULT_LOCAL_CONTEXT_COMPRESSION_SETTINGS.maxCompactionsPerTurn,
+    ),
+  };
+
+  await Promise.all([
+    localContextCompressionEnabledStorage.setValue(normalized.enabled),
+    localContextAutoCompactTokenLimitStorage.setValue(normalized.autoCompactTokenLimit),
+    localContextKeepRecentUserTokensStorage.setValue(normalized.keepRecentUserTokens),
+    localContextCompressionSummaryMaxTokensStorage.setValue(normalized.summaryMaxTokens),
+    localContextCompactPromptStorage.setValue(normalized.compactPrompt),
+    localContextMaxCompactionsPerTurnStorage.setValue(normalized.maxCompactionsPerTurn),
+  ]);
 }
 
 // 检查 URL 是否匹配原始提取网站列表

@@ -20,6 +20,8 @@ import {
   setMaxPdfExtractPages,
   getMaxToolCalls,
   setMaxToolCalls,
+  getLocalContextCompressionSettings,
+  setLocalContextCompressionSettings,
   getRawExtractSites,
   addRawExtractSite,
   removeRawExtractSite,
@@ -79,6 +81,14 @@ const maxPdfExtractPages = ref(30);
 
 // 工具调用最大次数
 const maxToolCalls = ref(100);
+
+// 本地上下文压缩设置
+const localContextCompressionEnabled = ref(true);
+const localContextAutoCompactTokenLimit = ref<number | null>(null);
+const localContextKeepRecentUserTokens = ref(4096);
+const localContextCompressionSummaryMaxTokens = ref(256);
+const localContextCompactPrompt = ref('');
+const localContextMaxCompactionsPerTurn = ref(2);
 
 // 原始提取网站设置
 const rawExtractSites = ref<string[]>([]);
@@ -193,6 +203,14 @@ onMounted(async () => {
   maxPdfExtractPages.value = await getMaxPdfExtractPages();
   // 加载工具调用上限
   maxToolCalls.value = await getMaxToolCalls();
+  // 加载本地上下文压缩配置
+  const localCompressionSettings = await getLocalContextCompressionSettings();
+  localContextCompressionEnabled.value = localCompressionSettings.enabled;
+  localContextAutoCompactTokenLimit.value = localCompressionSettings.autoCompactTokenLimit;
+  localContextKeepRecentUserTokens.value = localCompressionSettings.keepRecentUserTokens;
+  localContextCompressionSummaryMaxTokens.value = localCompressionSettings.summaryMaxTokens;
+  localContextCompactPrompt.value = localCompressionSettings.compactPrompt || '';
+  localContextMaxCompactionsPerTurn.value = localCompressionSettings.maxCompactionsPerTurn;
   // 加载原始提取网站设置
   rawExtractSites.value = await getRawExtractSites();
   // 加载字体设置
@@ -503,6 +521,38 @@ async function handleMaxToolCallsChange() {
     : 100;
   maxToolCalls.value = normalized;
   await setMaxToolCalls(normalized);
+}
+
+async function handleLocalCompressionSettingsChange() {
+  const normalizedAutoCompactTokenLimit = Number.isFinite(localContextAutoCompactTokenLimit.value)
+    ? Math.max(1, Math.floor(localContextAutoCompactTokenLimit.value!))
+    : null;
+  const normalizedKeepRecentUserTokens = Number.isFinite(localContextKeepRecentUserTokens.value)
+    ? Math.max(0, Math.floor(localContextKeepRecentUserTokens.value))
+    : 4096;
+  const normalizedSummaryMaxTokens = Number.isFinite(localContextCompressionSummaryMaxTokens.value)
+    ? Math.max(1, Math.floor(localContextCompressionSummaryMaxTokens.value))
+    : 256;
+  const normalizedMaxCompactionsPerTurn = Number.isFinite(localContextMaxCompactionsPerTurn.value)
+    ? Math.max(1, Math.floor(localContextMaxCompactionsPerTurn.value))
+    : 2;
+
+  await setLocalContextCompressionSettings({
+    enabled: Boolean(localContextCompressionEnabled.value),
+    autoCompactTokenLimit: normalizedAutoCompactTokenLimit,
+    keepRecentUserTokens: normalizedKeepRecentUserTokens,
+    summaryMaxTokens: normalizedSummaryMaxTokens,
+    compactPrompt: localContextCompactPrompt.value.trim() || null,
+    maxCompactionsPerTurn: normalizedMaxCompactionsPerTurn,
+  });
+
+  const refreshed = await getLocalContextCompressionSettings();
+  localContextCompressionEnabled.value = refreshed.enabled;
+  localContextAutoCompactTokenLimit.value = refreshed.autoCompactTokenLimit;
+  localContextKeepRecentUserTokens.value = refreshed.keepRecentUserTokens;
+  localContextCompressionSummaryMaxTokens.value = refreshed.summaryMaxTokens;
+  localContextCompactPrompt.value = refreshed.compactPrompt || '';
+  localContextMaxCompactionsPerTurn.value = refreshed.maxCompactionsPerTurn;
 }
 
 async function persistFontSettings(): Promise<void> {
@@ -1354,6 +1404,104 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                     </button>
                   </div>
                   <p class="settings-hint">{{ i18n('toolCallLimitHint') }}</p>
+                </div>
+              </div>
+
+              <div class="settings-divider"></div>
+
+              <div class="settings-item settings-item-vertical">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M4 4h16v4H4z"/>
+                      <path d="M4 10h16v10H4z"/>
+                      <path d="M8 14h8M8 18h5"/>
+                    </svg>
+                    <span>{{ i18n('localCompressionTitle') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('localCompressionDesc') }}</p>
+                </div>
+                <div class="settings-item-content">
+                  <div class="settings-item">
+                    <div class="settings-item-info">
+                      <div class="settings-item-label">
+                        <span>{{ i18n('localCompressionEnabled') }}</span>
+                      </div>
+                    </div>
+                    <div class="settings-item-control">
+                      <button
+                        class="toggle-btn"
+                        :class="{ active: localContextCompressionEnabled }"
+                        @click="localContextCompressionEnabled = !localContextCompressionEnabled"
+                      >
+                        <span class="toggle-track">
+                          <span class="toggle-thumb"></span>
+                        </span>
+                        <span class="toggle-label">{{ localContextCompressionEnabled ? i18n('floatingBallEnabled') : i18n('floatingBallDisabled') }}</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="settings-divider"></div>
+                  <div class="site-input-row">
+                    <input
+                      v-model.number="localContextAutoCompactTokenLimit"
+                      type="number"
+                      min="1"
+                      step="1000"
+                      class="site-input"
+                      :placeholder="i18n('localCompressionAutoCompactTokenLimitPlaceholder')"
+                    />
+                  </div>
+                  <p class="settings-hint">{{ i18n('localCompressionAutoCompactTokenLimitDesc') }}</p>
+
+                  <div class="site-input-row">
+                    <input
+                      v-model.number="localContextKeepRecentUserTokens"
+                      type="number"
+                      min="0"
+                      step="100"
+                      class="site-input"
+                      :placeholder="i18n('localCompressionKeepRecentUserTokensPlaceholder')"
+                    />
+                  </div>
+                  <p class="settings-hint">{{ i18n('localCompressionKeepRecentUserTokensDesc') }}</p>
+
+                  <div class="site-input-row">
+                    <input
+                      v-model.number="localContextCompressionSummaryMaxTokens"
+                      type="number"
+                      min="1"
+                      step="10"
+                      class="site-input"
+                      :placeholder="i18n('localCompressionSummaryMaxTokensPlaceholder')"
+                    />
+                  </div>
+                  <p class="settings-hint">{{ i18n('localCompressionSummaryMaxTokensDesc') }}</p>
+
+                  <div class="site-input-row">
+                    <input
+                      v-model.number="localContextMaxCompactionsPerTurn"
+                      type="number"
+                      min="1"
+                      step="1"
+                      class="site-input"
+                      :placeholder="i18n('localCompressionMaxCompactionsPerTurnPlaceholder')"
+                    />
+                  </div>
+                  <p class="settings-hint">{{ i18n('localCompressionMaxCompactionsPerTurnDesc') }}</p>
+
+                  <div class="site-input-row">
+                    <textarea
+                      v-model="localContextCompactPrompt"
+                      class="site-input"
+                      rows="3"
+                      :placeholder="i18n('localCompressionCompactPromptPlaceholder')"
+                    ></textarea>
+                  </div>
+                  <p class="settings-hint">{{ i18n('localCompressionCompactPromptDesc') }}</p>
+                  <button class="btn btn-primary btn-sm" @click="handleLocalCompressionSettingsChange">
+                    {{ i18n('save') }}
+                  </button>
                 </div>
               </div>
 

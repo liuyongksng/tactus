@@ -134,12 +134,24 @@ export interface SessionContextUsageSnapshot {
   };
 }
 
+export interface SessionContextCompactionMeta {
+  trigger: 'pre-turn' | 'mid-turn' | 'model-switch';
+  beforeTokens: number;
+  afterTokens: number;
+  trimmedCount: number;
+  usedFallback: boolean;
+  summaryPreview: string;
+  compactionCountInTurn: number;
+  updatedAt: number;
+}
+
 export interface ChatSession {
   id: string;
   title: string;
   messages: ChatMessage[];
   apiMessages?: ApiMessageRecord[];
   contextUsage?: SessionContextUsageSnapshot;
+  compressionMeta?: SessionContextCompactionMeta;
   createdAt: number;
   updatedAt: number;
   providerId?: string;

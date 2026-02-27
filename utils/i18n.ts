@@ -136,6 +136,19 @@ export interface Translations {
   toolCallLimit: string;
   toolCallLimitDesc: string;
   toolCallLimitHint: string;
+  localCompressionTitle: string;
+  localCompressionDesc: string;
+  localCompressionEnabled: string;
+  localCompressionAutoCompactTokenLimitPlaceholder: string;
+  localCompressionAutoCompactTokenLimitDesc: string;
+  localCompressionKeepRecentUserTokensPlaceholder: string;
+  localCompressionKeepRecentUserTokensDesc: string;
+  localCompressionSummaryMaxTokensPlaceholder: string;
+  localCompressionSummaryMaxTokensDesc: string;
+  localCompressionMaxCompactionsPerTurnPlaceholder: string;
+  localCompressionMaxCompactionsPerTurnDesc: string;
+  localCompressionCompactPromptPlaceholder: string;
+  localCompressionCompactPromptDesc: string;
   
   // 原始提取网站设置
   rawExtractSites: string;
@@ -226,6 +239,20 @@ export interface Translations {
   debugContextSourceChat: string;
   debugContextSourceEstimate: string;
   debugContextSourceOverflow: string;
+  debugCompactionTitle: string;
+  debugCompactionEmpty: string;
+  debugCompactionTrigger: string;
+  debugCompactionBeforeTokens: string;
+  debugCompactionAfterTokens: string;
+  debugCompactionTrimmed: string;
+  debugCompactionFallback: string;
+  debugCompactionCount: string;
+  debugCompactionUpdatedAt: string;
+  debugCompactionTriggerPreTurn: string;
+  debugCompactionTriggerMidTurn: string;
+  debugCompactionTriggerModelSwitch: string;
+  debugCompactionYes: string;
+  debugCompactionNo: string;
   
   // 确认对话框
   confirmDeleteProvider: string;
@@ -393,6 +420,19 @@ const en: Translations = {
   toolCallLimit: 'Max tool calls',
   toolCallLimitDesc: 'Maximum number of tool calls per request',
   toolCallLimitHint: 'Stop tool loop once the limit is reached',
+  localCompressionTitle: 'Local context compression',
+  localCompressionDesc: 'Automatically trim API history before hitting context limits',
+  localCompressionEnabled: 'Enable local compression',
+  localCompressionAutoCompactTokenLimitPlaceholder: 'Auto compact threshold (optional)',
+  localCompressionAutoCompactTokenLimitDesc: 'When empty, it uses 90% of effective input budget automatically.',
+  localCompressionKeepRecentUserTokensPlaceholder: 'Keep recent user tokens (e.g. 4096)',
+  localCompressionKeepRecentUserTokensDesc: 'Reserve this token budget for the most recent user messages.',
+  localCompressionSummaryMaxTokensPlaceholder: 'Summary max tokens (e.g. 256)',
+  localCompressionSummaryMaxTokensDesc: 'Upper bound for local summary text length.',
+  localCompressionMaxCompactionsPerTurnPlaceholder: 'Max compactions per turn (e.g. 2)',
+  localCompressionMaxCompactionsPerTurnDesc: 'Avoid repeated compaction loops in a single turn.',
+  localCompressionCompactPromptPlaceholder: 'Optional summary instruction',
+  localCompressionCompactPromptDesc: 'Optional local hint for summary style and focus.',
   
   // 原始提取网站设置
   rawExtractSites: 'Raw Extract Sites',
@@ -483,6 +523,20 @@ const en: Translations = {
   debugContextSourceChat: 'Chat usage',
   debugContextSourceEstimate: 'Local estimate',
   debugContextSourceOverflow: 'Overflow guard',
+  debugCompactionTitle: 'Compaction stats',
+  debugCompactionEmpty: 'No compaction yet',
+  debugCompactionTrigger: 'Trigger',
+  debugCompactionBeforeTokens: 'Before tokens',
+  debugCompactionAfterTokens: 'After tokens',
+  debugCompactionTrimmed: 'Trimmed messages',
+  debugCompactionFallback: 'Fallback used',
+  debugCompactionCount: 'Compaction count',
+  debugCompactionUpdatedAt: 'Updated',
+  debugCompactionTriggerPreTurn: 'Pre-turn',
+  debugCompactionTriggerMidTurn: 'Mid-turn',
+  debugCompactionTriggerModelSwitch: 'Model switch',
+  debugCompactionYes: 'Yes',
+  debugCompactionNo: 'No',
   
   // 确认对话框
   confirmDeleteProvider: 'Are you sure you want to delete this provider?',
@@ -650,6 +704,19 @@ const zhCN: Translations = {
   toolCallLimit: '工具调用最大次数',
   toolCallLimitDesc: '每次请求允许的工具调用上限',
   toolCallLimitHint: '达到上限后将停止工具循环',
+  localCompressionTitle: '本地上下文压缩',
+  localCompressionDesc: '在接近上下文上限前自动压缩 API 历史',
+  localCompressionEnabled: '启用本地压缩',
+  localCompressionAutoCompactTokenLimitPlaceholder: '自动压缩阈值（可选）',
+  localCompressionAutoCompactTokenLimitDesc: '留空时会自动使用有效输入预算的 90%。',
+  localCompressionKeepRecentUserTokensPlaceholder: '保留最近用户 tokens（例如 4096）',
+  localCompressionKeepRecentUserTokensDesc: '压缩时为最近用户消息预留的 token 预算。',
+  localCompressionSummaryMaxTokensPlaceholder: '摘要最大 tokens（例如 256）',
+  localCompressionSummaryMaxTokensDesc: '本地摘要文本长度上限。',
+  localCompressionMaxCompactionsPerTurnPlaceholder: '每轮最大压缩次数（例如 2）',
+  localCompressionMaxCompactionsPerTurnDesc: '避免单轮反复压缩导致循环。',
+  localCompressionCompactPromptPlaceholder: '可选摘要提示词',
+  localCompressionCompactPromptDesc: '可选，用于约束摘要风格和重点。',
   
   // 原始提取网站设置
   rawExtractSites: '原始提取网站',
@@ -740,6 +807,20 @@ const zhCN: Translations = {
   debugContextSourceChat: 'Chat usage',
   debugContextSourceEstimate: '本地估算',
   debugContextSourceOverflow: '超窗保护',
+  debugCompactionTitle: '压缩统计',
+  debugCompactionEmpty: '暂无压缩记录',
+  debugCompactionTrigger: '触发来源',
+  debugCompactionBeforeTokens: '压缩前 tokens',
+  debugCompactionAfterTokens: '压缩后 tokens',
+  debugCompactionTrimmed: '裁剪消息数',
+  debugCompactionFallback: '是否 fallback',
+  debugCompactionCount: '本轮压缩次数',
+  debugCompactionUpdatedAt: '更新时间',
+  debugCompactionTriggerPreTurn: '请求前',
+  debugCompactionTriggerMidTurn: '回合中',
+  debugCompactionTriggerModelSwitch: '切模型前',
+  debugCompactionYes: '是',
+  debugCompactionNo: '否',
   
   // 确认对话框
   confirmDeleteProvider: '确定删除这个服务商吗？',

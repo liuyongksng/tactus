@@ -3,9 +3,11 @@ import {
   DEFAULT_SYSTEM_PROMPT_TEMPLATE,
   deleteProvider,
   getAllProviders,
+  getLocalContextCompressionSettings,
   getTrustedScripts,
   removeTrustedScriptsBySkillId,
   saveProvider,
+  setLocalContextCompressionSettings,
   setActiveProviderId,
   trustScript,
   untrustScript,
@@ -114,5 +116,24 @@ describe('storage 并发写入', () => {
       .map(script => script.scriptName);
 
     expect(names).toEqual(['script-c']);
+  });
+
+  it('本地压缩配置保存后应按规则归一化', async () => {
+    await setLocalContextCompressionSettings({
+      enabled: true,
+      autoCompactTokenLimit: -100,
+      keepRecentUserTokens: -1,
+      summaryMaxTokens: 0,
+      compactPrompt: '   ',
+      maxCompactionsPerTurn: 0,
+    });
+
+    const settings = await getLocalContextCompressionSettings();
+    expect(settings.enabled).toBe(true);
+    expect(settings.autoCompactTokenLimit).toBeNull();
+    expect(settings.keepRecentUserTokens).toBe(4096);
+    expect(settings.summaryMaxTokens).toBe(256);
+    expect(settings.compactPrompt).toBeNull();
+    expect(settings.maxCompactionsPerTurn).toBe(2);
   });
 });

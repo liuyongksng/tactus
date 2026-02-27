@@ -64,11 +64,13 @@ vi.mock('openai', () => {
 import {
   getLastContextUsage,
   getLastApiMessages,
+  setLastContextUsage,
   setLastApiMessages,
   streamChat,
   type ApiMessage,
   type StreamEvent,
 } from '../../utils/api';
+import { SUMMARY_PREFIX } from '../../utils/localCompression';
 
 interface OpenAIMockHooks {
   __queueChatCreate: (handler: (...args: unknown[]) => Promise<AsyncIterable<unknown>>) => void;
@@ -419,6 +421,152 @@ describe('streamChat 主链路', () => {
       expect(usageEvent.usage.precision).toBe('exact');
       expect(usageEvent.usage.effectiveContextWindowTokens).toBe(80000);
     }
+  });
+
+  it('pre-turn 命中阈值时应触发 context_compaction 事件并写入摘要消息', async () => {
+    const openaiMock = (await import('openai')) as unknown as OpenAIMockHooks;
+    const sessionKey = 'session-pre-turn-compaction';
+
+    openaiMock.__queueChatCreate(async () =>
+      fromChunks([
+        {
+          choices: [{ delta: { content: 'compaction-ok' } }],
+        },
+      ]),
+    );
+
+    const previousApiMessages: ApiMessage[] = [
+      { role: 'system', content: 'system prompt' },
+      { role: 'user', content: '历史消息-1: 这是非常长的内容，用于触发预压缩。'.repeat(20) },
+      { role: 'assistant', content: '历史回复-1'.repeat(20) },
+      { role: 'user', content: '历史消息-2: 继续拉高 token。'.repeat(20) },
+      { role: 'assistant', content: '历史回复-2'.repeat(20) },
+    ];
+
+    const events = await collectEvents(
+      streamChat(
+        createProvider({
+          apiMode: 'chat_completions',
+          contextWindowTokens: 1200,
+          maxOutputTokens: 200,
+        }),
+        [createUserMessage('新的提问')],
+        { sessionKey },
+        {
+          enableTools: false,
+          localCompression: {
+            enabled: true,
+            autoCompactTokenLimit: 800,
+            keepRecentUserTokens: 60,
+            summaryMaxTokens: 32,
+            compactPrompt: '保留事实',
+            maxCompactionsPerTurn: 2,
+          },
+        },
+        RETRY_CONFIG,
+        previousApiMessages,
+      ),
+    );
+
+    const compactionEvent = events.find(event => event.type === 'context_compaction');
+    expect(compactionEvent).toBeDefined();
+    if (compactionEvent && compactionEvent.type === 'context_compaction') {
+      expect(compactionEvent.meta.trigger).toBe('pre-turn');
+      expect(compactionEvent.meta.usedFallback).toBe(false);
+    }
+
+    const finalMessages = getLastApiMessages(sessionKey);
+    expect(
+      finalMessages.some(
+        message =>
+          message.role === 'user'
+          && typeof message.content === 'string'
+          && message.content.startsWith(SUMMARY_PREFIX),
+      ),
+    ).toBe(true);
+  });
+
+  it('pre-turn 压缩后应清空旧的 exact usage 基线，避免沿用历史 token', async () => {
+    const openaiMock = (await import('openai')) as unknown as OpenAIMockHooks;
+    const sessionKey = 'session-pre-turn-usage-reset';
+
+    openaiMock.__queueChatCreate(async () =>
+      fromChunks([
+        {
+          choices: [{ delta: { content: 'usage-reset-ok' } }],
+        },
+      ]),
+    );
+
+    setLastContextUsage({
+      sessionKey,
+      exactBaseTokens: 888,
+      pendingEstimateTokens: 0,
+      currentTokensMixed: 888,
+      totalTokensAccumulated: 888,
+      contextWindowTokens: 200000,
+      effectiveContextWindowTokens: 180000,
+      usageRatio: 888 / 180000,
+      precision: 'exact',
+      source: 'chat_usage',
+      lastSettledMessageCount: 3,
+      updatedAt: Date.now() - 1000,
+      tokenDetails: {
+        inputTokens: 800,
+        cachedInputTokens: null,
+        outputTokens: 88,
+        reasoningOutputTokens: null,
+      },
+    });
+
+    const previousApiMessages: ApiMessage[] = [
+      { role: 'system', content: 'system prompt' },
+      { role: 'user', content: '历史消息-1: 这是非常长的内容，用于触发预压缩。'.repeat(20) },
+      { role: 'assistant', content: '历史回复-1'.repeat(20) },
+      { role: 'user', content: '历史消息-2: 继续拉高 token。'.repeat(20) },
+      { role: 'assistant', content: '历史回复-2'.repeat(20) },
+    ];
+
+    const events = await collectEvents(
+      streamChat(
+        createProvider({
+          apiMode: 'chat_completions',
+          contextWindowTokens: 1200,
+          maxOutputTokens: 200,
+        }),
+        [createUserMessage('新的提问')],
+        { sessionKey },
+        {
+          enableTools: false,
+          localCompression: {
+            enabled: true,
+            autoCompactTokenLimit: 800,
+            keepRecentUserTokens: 60,
+            summaryMaxTokens: 32,
+            compactPrompt: '保留事实',
+            maxCompactionsPerTurn: 2,
+          },
+        },
+        RETRY_CONFIG,
+        previousApiMessages,
+      ),
+    );
+
+    const compactionIndex = events.findIndex(event => event.type === 'context_compaction');
+    expect(compactionIndex).toBeGreaterThan(-1);
+
+    const usageAfterCompaction = events
+      .slice(compactionIndex + 1)
+      .find(event => event.type === 'context_usage');
+    expect(usageAfterCompaction).toBeDefined();
+    if (usageAfterCompaction && usageAfterCompaction.type === 'context_usage') {
+      expect(usageAfterCompaction.usage.exactBaseTokens).toBeNull();
+      expect(usageAfterCompaction.usage.precision).toBe('estimated');
+    }
+
+    const finalUsage = getLastContextUsage(sessionKey);
+    expect(finalUsage?.exactBaseTokens).toBeNull();
+    expect(finalUsage?.precision).toBe('estimated');
   });
 
   it('工具执行失败重试时应回滚失败轮消息并仅保留成功轮', async () => {

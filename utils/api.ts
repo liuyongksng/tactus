@@ -2,6 +2,18 @@ import OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
 import type { ChatMessage } from './db';
 import {
+  compactHistoryLocally,
+  fallbackTrimHistory,
+  removeOrphanToolMessages,
+  resolveAutoCompactLimit,
+  shouldCompactMidTurn,
+  shouldCompactPreTurn,
+  type ContextCompactionMeta,
+  type ContextCompactionTrigger,
+  type LocalCompressionSettings,
+} from './localCompression';
+export type { ContextCompactionMeta } from './localCompression';
+import {
   DEFAULT_SYSTEM_PROMPT_TEMPLATE,
   getDefaultReasoningEffortForModel,
   getReasoningEffortsForModel,
@@ -208,6 +220,16 @@ const DEFAULT_API_CONTEXT_KEY = '__default__';
 const lastApiMessagesBySession = new Map<string, ApiMessage[]>();
 const chatIncludeUsageDisabledProviders = new Set<string>();
 const APPROX_BYTES_PER_TOKEN = 4;
+const lastContextCompactionBySession = new Map<string, ContextCompactionMeta>();
+
+const DEFAULT_LOCAL_COMPRESSION_SETTINGS: LocalCompressionSettings = {
+  enabled: false,
+  autoCompactTokenLimit: null,
+  keepRecentUserTokens: 4096,
+  summaryMaxTokens: 256,
+  compactPrompt: null,
+  maxCompactionsPerTurn: 2,
+};
 
 export type ContextUsagePrecision = 'exact' | 'mixed' | 'estimated' | 'forced_full';
 export type ContextUsageSource = 'responses_usage' | 'chat_usage' | 'local_estimate' | 'overflow_guard';
@@ -271,12 +293,40 @@ export function setLastApiMessages(messages: ApiMessage[], sessionKey?: string) 
   lastApiMessagesBySession.set(key, [...messages]);
   if (messages.length === 0) {
     lastContextUsageBySession.delete(key);
+    lastContextCompactionBySession.delete(key);
   }
 }
 
 export function clearAllLastApiMessages(): void {
   lastApiMessagesBySession.clear();
   lastContextUsageBySession.clear();
+  lastContextCompactionBySession.clear();
+}
+
+export function getLastContextCompaction(sessionKey?: string): ContextCompactionMeta | null {
+  const key = resolveApiContextKey(sessionKey);
+  const meta = lastContextCompactionBySession.get(key);
+  return meta ? { ...meta } : null;
+}
+
+export function setLastContextCompaction(meta: ContextCompactionMeta, sessionKey?: string): ContextCompactionMeta {
+  const key = resolveApiContextKey(sessionKey);
+  const normalized: ContextCompactionMeta = {
+    ...meta,
+    compactionCountInTurn: Math.max(1, Math.floor(meta.compactionCountInTurn || 1)),
+    beforeTokens: Math.max(0, Math.floor(meta.beforeTokens || 0)),
+    afterTokens: Math.max(0, Math.floor(meta.afterTokens || 0)),
+    trimmedCount: Math.max(0, Math.floor(meta.trimmedCount || 0)),
+    summaryPreview: typeof meta.summaryPreview === 'string' ? meta.summaryPreview : '',
+    updatedAt: Number.isFinite(meta.updatedAt) ? meta.updatedAt : Date.now(),
+  };
+  lastContextCompactionBySession.set(key, normalized);
+  return { ...normalized };
+}
+
+export function clearLastContextCompaction(sessionKey?: string): void {
+  const key = resolveApiContextKey(sessionKey);
+  lastContextCompactionBySession.delete(key);
 }
 
 function cloneContextUsageTokenDetails(details: ContextUsageTokenDetails): ContextUsageTokenDetails {
@@ -603,6 +653,7 @@ export interface FunctionCallingConfig {
   maxIterations?: number;
   maxToolCalls?: number;
   abortSignal?: AbortSignal;
+  localCompression?: Partial<LocalCompressionSettings>;
 }
 
 export interface StreamChatContext {
@@ -622,9 +673,143 @@ export type StreamEvent =
   | { type: 'tool_call'; toolCall: ToolCall }
   | { type: 'tool_result'; result: ToolResult }
   | { type: 'context_usage'; usage: ContextUsageSnapshot }
+  | { type: 'context_compaction'; meta: ContextCompactionMeta }
   | { type: 'thinking'; message: string }
   | { type: 'error'; error: ApiError; retrying: boolean; attempt: number }
   | { type: 'done' };
+
+function normalizeLocalCompressionSettings(
+  settings?: Partial<LocalCompressionSettings>,
+): LocalCompressionSettings {
+  const merged = {
+    ...DEFAULT_LOCAL_COMPRESSION_SETTINGS,
+    ...(settings || {}),
+  };
+  const autoCompactTokenLimit =
+    typeof merged.autoCompactTokenLimit === 'number' && Number.isFinite(merged.autoCompactTokenLimit)
+      ? Math.max(1, Math.floor(merged.autoCompactTokenLimit))
+      : null;
+  const keepRecentUserTokens =
+    typeof merged.keepRecentUserTokens === 'number' && Number.isFinite(merged.keepRecentUserTokens)
+      ? Math.max(0, Math.floor(merged.keepRecentUserTokens))
+      : DEFAULT_LOCAL_COMPRESSION_SETTINGS.keepRecentUserTokens;
+  const summaryMaxTokens =
+    typeof merged.summaryMaxTokens === 'number' && Number.isFinite(merged.summaryMaxTokens)
+      ? Math.max(1, Math.floor(merged.summaryMaxTokens))
+      : DEFAULT_LOCAL_COMPRESSION_SETTINGS.summaryMaxTokens;
+  const compactPrompt =
+    typeof merged.compactPrompt === 'string' && merged.compactPrompt.trim().length > 0
+      ? merged.compactPrompt.trim()
+      : null;
+  const maxCompactionsPerTurn =
+    typeof merged.maxCompactionsPerTurn === 'number' && Number.isFinite(merged.maxCompactionsPerTurn)
+      ? Math.max(1, Math.floor(merged.maxCompactionsPerTurn))
+      : DEFAULT_LOCAL_COMPRESSION_SETTINGS.maxCompactionsPerTurn;
+  return {
+    enabled: Boolean(merged.enabled),
+    autoCompactTokenLimit,
+    keepRecentUserTokens,
+    summaryMaxTokens,
+    compactPrompt,
+    maxCompactionsPerTurn,
+  };
+}
+
+function resolveCompactionTokenLimit(
+  provider: Pick<AIProvider, 'contextWindowTokens' | 'maxOutputTokens'>,
+  settings: LocalCompressionSettings,
+): number | null {
+  const result = resolveAutoCompactLimit({
+    contextWindowTokens: resolveContextWindowTokens(provider),
+    effectiveContextWindowTokens: resolveEffectiveContextWindowTokens(provider),
+    userConfiguredLimit: settings.autoCompactTokenLimit,
+  });
+  return result.computedLimit;
+}
+
+interface MaybeCompactMessagesInput {
+  messages: ApiMessage[];
+  trigger: ContextCompactionTrigger;
+  tokenLimit: number | null;
+  settings: LocalCompressionSettings;
+  estimateTokens: (messages: ApiMessage[]) => number;
+  compactionCountInTurn: number;
+}
+
+interface MaybeCompactMessagesResult {
+  nextMessages: ApiMessage[];
+  meta: ContextCompactionMeta | null;
+}
+
+function maybeCompactMessages(input: MaybeCompactMessagesInput): MaybeCompactMessagesResult {
+  const normalizedMessages = removeOrphanToolMessages(input.messages);
+  if (!input.settings.enabled) {
+    return { nextMessages: normalizedMessages, meta: null };
+  }
+  if (input.compactionCountInTurn >= input.settings.maxCompactionsPerTurn) {
+    return { nextMessages: normalizedMessages, meta: null };
+  }
+
+  const currentTokens = input.estimateTokens(normalizedMessages);
+  const shouldCompact = input.trigger === 'mid-turn'
+    ? shouldCompactMidTurn(currentTokens, input.tokenLimit)
+    : shouldCompactPreTurn(currentTokens, input.tokenLimit);
+  if (!shouldCompact) {
+    return { nextMessages: normalizedMessages, meta: null };
+  }
+
+  const nextCompactionCount = input.compactionCountInTurn + 1;
+  try {
+    let compacted = compactHistoryLocally({
+      messages: normalizedMessages,
+      trigger: input.trigger,
+      keepRecentUserTokens: input.settings.keepRecentUserTokens,
+      summaryMaxTokens: input.settings.summaryMaxTokens,
+      compactPrompt: input.settings.compactPrompt,
+      estimateTokens: input.estimateTokens,
+      compactionCountInTurn: nextCompactionCount,
+    });
+    if (input.tokenLimit !== null && input.estimateTokens(compacted.nextMessages) > input.tokenLimit) {
+      compacted = fallbackTrimHistory({
+        messages: normalizedMessages,
+        tokenLimit: input.tokenLimit,
+        trigger: input.trigger,
+        estimateTokens: input.estimateTokens,
+        compactionCountInTurn: nextCompactionCount,
+      });
+    }
+    return {
+      nextMessages: removeOrphanToolMessages(compacted.nextMessages),
+      meta: compacted.meta,
+    };
+  } catch (error) {
+    console.warn('[localCompression] 压缩失败，尝试 fallback:', error);
+    if (input.tokenLimit === null) {
+      return { nextMessages: normalizedMessages, meta: null };
+    }
+    const fallback = fallbackTrimHistory({
+      messages: normalizedMessages,
+      tokenLimit: input.tokenLimit,
+      trigger: input.trigger,
+      estimateTokens: input.estimateTokens,
+      compactionCountInTurn: nextCompactionCount,
+    });
+    return {
+      nextMessages: removeOrphanToolMessages(fallback.nextMessages),
+      meta: fallback.meta,
+    };
+  }
+}
+
+function buildCompactionStatusText(meta: ContextCompactionMeta): string {
+  const triggerLabel: Record<ContextCompactionTrigger, string> = {
+    'pre-turn': '请求前',
+    'mid-turn': '回合中',
+    'model-switch': '模型切换前',
+  };
+  const fallbackLabel = meta.usedFallback ? '（fallback）' : '';
+  return `已执行本地压缩${fallbackLabel}：${triggerLabel[meta.trigger]}，裁剪 ${meta.trimmedCount} 条历史`;
+}
 
 // 检查 JSON 对象字符串是否已经闭合（大括号匹配）
 // 用于处理某些模型（如 GLM-4.7）对无参数工具重复返回 "{}" 的情况
@@ -1188,6 +1373,8 @@ async function* streamChatWithChatCompletions(
   const toolExecutor = config?.toolExecutor;
   const maxIterations = config?.maxIterations || 5;
   const maxToolCalls = Math.max(1, config?.maxToolCalls || 100);
+  const localCompressionSettings = normalizeLocalCompressionSettings(config?.localCompression);
+  const compactionTokenLimit = resolveCompactionTokenLimit(provider, localCompressionSettings);
   const maxOutputTokens = resolveMaxOutputTokens(provider);
   const allowImages = isVisionSupportedForModel(provider, provider.selectedModel);
   const apiContextSessionKey = context?.sessionKey;
@@ -1250,6 +1437,29 @@ async function* streamChatWithChatCompletions(
     });
   };
   yield { type: 'context_usage', usage: publishContextUsage('local_estimate', apiMessages) };
+
+  let compactionCountInTurn = 0;
+  const preTurnCompaction = maybeCompactMessages({
+    messages: apiMessages,
+    trigger: 'pre-turn',
+    tokenLimit: compactionTokenLimit,
+    settings: localCompressionSettings,
+    estimateTokens: estimateTokensFromApiMessages,
+    compactionCountInTurn,
+  });
+  if (preTurnCompaction.meta) {
+    apiMessages = preTurnCompaction.nextMessages;
+    compactionCountInTurn = preTurnCompaction.meta.compactionCountInTurn;
+    setLastApiMessages(apiMessages, apiContextSessionKey);
+    const persistedMeta = setLastContextCompaction(preTurnCompaction.meta, apiContextSessionKey);
+    clearLastContextUsage(apiContextSessionKey);
+    yield { type: 'context_compaction', meta: persistedMeta };
+    yield { type: 'thinking', message: buildCompactionStatusText(persistedMeta) };
+    if (compactionCountInTurn > 1) {
+      yield { type: 'thinking', message: '当前回合已多次压缩，回答精度可能下降。' };
+    }
+    yield { type: 'context_usage', usage: publishContextUsage('local_estimate', apiMessages) };
+  }
 
   // 获取过滤后的工具列表
   const tools = enableTools ? getFilteredTools(context) : [];
@@ -1694,6 +1904,31 @@ async function* streamChatWithChatCompletions(
 
       // 本轮工具调用成功后，重置连续失败计数
       toolCallRetryCount = 0;
+
+      const midTurnCompaction = maybeCompactMessages({
+        messages: currentMessages,
+        trigger: 'mid-turn',
+        tokenLimit: compactionTokenLimit,
+        settings: localCompressionSettings,
+        estimateTokens: estimateTokensFromApiMessages,
+        compactionCountInTurn,
+      });
+      if (midTurnCompaction.meta) {
+        currentMessages = midTurnCompaction.nextMessages;
+        compactionCountInTurn = midTurnCompaction.meta.compactionCountInTurn;
+        setLastApiMessages(currentMessages, apiContextSessionKey);
+        const persistedMeta = setLastContextCompaction(midTurnCompaction.meta, apiContextSessionKey);
+        clearLastContextUsage(apiContextSessionKey);
+        yield { type: 'context_compaction', meta: persistedMeta };
+        yield { type: 'thinking', message: buildCompactionStatusText(persistedMeta) };
+        if (compactionCountInTurn > 1) {
+          yield { type: 'thinking', message: '当前回合已多次压缩，回答精度可能下降。' };
+        }
+        yield {
+          type: 'context_usage',
+          usage: publishContextUsage('local_estimate', currentMessages),
+        };
+      }
       
       // 继续下一轮迭代
       continue;
@@ -1735,6 +1970,8 @@ async function* streamChatWithResponses(
   const toolExecutor = config?.toolExecutor;
   const maxIterations = config?.maxIterations || 5;
   const maxToolCalls = Math.max(1, config?.maxToolCalls || 100);
+  const localCompressionSettings = normalizeLocalCompressionSettings(config?.localCompression);
+  const compactionTokenLimit = resolveCompactionTokenLimit(provider, localCompressionSettings);
   const maxOutputTokens = resolveMaxOutputTokens(provider);
   const allowImages = isVisionSupportedForModel(provider, provider.selectedModel);
   const apiContextSessionKey = context?.sessionKey;
@@ -1792,6 +2029,29 @@ async function* streamChatWithResponses(
     });
   };
   yield { type: 'context_usage', usage: publishContextUsage('local_estimate', apiMessages) };
+
+  let compactionCountInTurn = 0;
+  const preTurnCompaction = maybeCompactMessages({
+    messages: apiMessages,
+    trigger: 'pre-turn',
+    tokenLimit: compactionTokenLimit,
+    settings: localCompressionSettings,
+    estimateTokens: estimateTokensFromApiMessages,
+    compactionCountInTurn,
+  });
+  if (preTurnCompaction.meta) {
+    apiMessages = preTurnCompaction.nextMessages;
+    compactionCountInTurn = preTurnCompaction.meta.compactionCountInTurn;
+    setLastApiMessages(apiMessages, apiContextSessionKey);
+    const persistedMeta = setLastContextCompaction(preTurnCompaction.meta, apiContextSessionKey);
+    clearLastContextUsage(apiContextSessionKey);
+    yield { type: 'context_compaction', meta: persistedMeta };
+    yield { type: 'thinking', message: buildCompactionStatusText(persistedMeta) };
+    if (compactionCountInTurn > 1) {
+      yield { type: 'thinking', message: '当前回合已多次压缩，回答精度可能下降。' };
+    }
+    yield { type: 'context_usage', usage: publishContextUsage('local_estimate', apiMessages) };
+  }
 
   const tools = enableTools ? getFilteredTools(context) : [];
   const baseResponseTools = tools.length > 0 ? convertToolsToResponses(tools) : undefined;
@@ -2172,6 +2432,31 @@ async function* streamChatWithResponses(
 
       // 本轮工具调用成功后，重置连续失败计数
       toolCallRetryCount = 0;
+
+      const midTurnCompaction = maybeCompactMessages({
+        messages: currentMessages,
+        trigger: 'mid-turn',
+        tokenLimit: compactionTokenLimit,
+        settings: localCompressionSettings,
+        estimateTokens: estimateTokensFromApiMessages,
+        compactionCountInTurn,
+      });
+      if (midTurnCompaction.meta) {
+        currentMessages = midTurnCompaction.nextMessages;
+        compactionCountInTurn = midTurnCompaction.meta.compactionCountInTurn;
+        setLastApiMessages(currentMessages, apiContextSessionKey);
+        const persistedMeta = setLastContextCompaction(midTurnCompaction.meta, apiContextSessionKey);
+        clearLastContextUsage(apiContextSessionKey);
+        yield { type: 'context_compaction', meta: persistedMeta };
+        yield { type: 'thinking', message: buildCompactionStatusText(persistedMeta) };
+        if (compactionCountInTurn > 1) {
+          yield { type: 'thinking', message: '当前回合已多次压缩，回答精度可能下降。' };
+        }
+        yield {
+          type: 'context_usage',
+          usage: publishContextUsage('local_estimate', currentMessages),
+        };
+      }
       continue;
     }
 
