@@ -5,6 +5,7 @@
  */
 
 import { storage } from '@wxt-dev/storage';
+import { createMutationGate } from './storageLock';
 
 // ==================== 类型定义 ====================
 
@@ -100,17 +101,8 @@ const localContextMaxCompactionsPerTurnStorage = storage.defineItem<number>('loc
   fallback: DEFAULT_LOCAL_CONTEXT_COMPRESSION_SETTINGS.maxCompactionsPerTurn,
 });
 
-function createSerializedMutationQueue() {
-  let queueTail: Promise<void> = Promise.resolve();
-  return async (mutation: () => Promise<void>): Promise<void> => {
-    const run = queueTail.then(mutation, mutation);
-    queueTail = run.catch(() => undefined);
-    await run;
-  };
-}
-
-const runProvidersMutation = createSerializedMutationQueue();
-const runTrustedScriptsMutation = createSerializedMutationQueue();
+const runProvidersMutation = createMutationGate('providers');
+const runTrustedScriptsMutation = createMutationGate('trusted-scripts');
 
 // ==================== Theme Settings ====================
 

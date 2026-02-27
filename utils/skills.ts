@@ -19,6 +19,7 @@ export {
   getSkill,
   getSkillByName,
   saveSkill,
+  saveSkillWithFiles,
   deleteSkill,
 } from './db';
 

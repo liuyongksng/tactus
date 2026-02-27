@@ -10,8 +10,7 @@ import {
   type SkillFile,
   parseSkillMd,
   generateSkillId,
-  saveSkill,
-  saveSkillFile,
+  saveSkillWithFiles,
   getSkillByName,
 } from './skills';
 import { validateScript } from './skillsExecutor';
@@ -59,6 +58,18 @@ function getMimeType(filename: string): string {
 function isTextFile(filename: string): boolean {
   const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
   return TEXT_EXTENSIONS.has(ext);
+}
+
+async function buildSkillFile(skillId: string, path: string, file: File): Promise<SkillFile> {
+  const content = await file.arrayBuffer();
+  return {
+    skillId,
+    path,
+    content,
+    mimeType: getMimeType(file.name),
+    size: content.byteLength,
+    isText: isTextFile(file.name),
+  };
 }
 
 /**
@@ -186,12 +197,11 @@ export async function importSkillFromFolder(files: FileList): Promise<ImportResu
       location: basePath || 'folder',
     };
     
-    // 保存 Skill 元数据
-    await saveSkill(skill);
-    
+    const skillFiles: SkillFile[] = [];
+
     // 保存 SKILL.md 文件
     const skillMdBuffer = await skillMdFile.arrayBuffer();
-    await saveSkillFile({
+    skillFiles.push({
       skillId,
       path: 'SKILL.md',
       content: skillMdBuffer,
@@ -202,17 +212,11 @@ export async function importSkillFromFolder(files: FileList): Promise<ImportResu
     
     // 保存所有其他文件
     for (const { path, file } of filesToSave) {
-      const content = await file.arrayBuffer();
-      const skillFile: SkillFile = {
-        skillId,
-        path,
-        content,
-        mimeType: getMimeType(file.name),
-        size: content.byteLength,
-        isText: isTextFile(file.name),
-      };
-      await saveSkillFile(skillFile);
+      skillFiles.push(await buildSkillFile(skillId, path, file));
     }
+
+    // 在同一事务中保存 Skill 元数据和全部文件，避免半成品写入
+    await saveSkillWithFiles(skill, skillFiles);
     
     return {
       success: true,

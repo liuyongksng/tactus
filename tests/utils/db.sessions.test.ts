@@ -102,12 +102,15 @@ const mockDb = {
     }
     return undefined;
   },
-  async getAllFromIndex(storeName: string, indexName: string) {
+  async getAllFromIndex(storeName: string, indexName: string, query?: unknown) {
     const store = ensureStore(storeName);
     const indexField = store.indexes.get(indexName);
     const values = Array.from(store.records.values()).map(item => cloneValue(item as Record<string, unknown>));
     if (!indexField) return values;
-    return values.sort((a, b) => {
+    const filtered = query === undefined
+      ? values
+      : values.filter(value => (value as Record<string, unknown>)?.[indexField] === query);
+    return filtered.sort((a, b) => {
       const av = Number((a as Record<string, unknown>)?.[indexField] ?? 0);
       const bv = Number((b as Record<string, unknown>)?.[indexField] ?? 0);
       return av - bv;
@@ -127,6 +130,10 @@ const mockDb = {
           },
           async delete(key: unknown) {
             store.records.delete(normalizeKey(key));
+          },
+          async put(value: unknown, key?: unknown) {
+            const finalKey = resolveStoreKey(store, value, key);
+            store.records.set(normalizeKey(finalKey), cloneValue(value));
           },
         };
       },
@@ -165,13 +172,16 @@ import {
   deleteSkill,
   getAllSessions,
   getCurrentSession,
+  getSkillFiles,
   getSession,
   getSessionsPaginated,
   getSkill,
+  saveSkillFile,
   saveSkill,
   setCurrentSessionId,
   updateSession,
 } from '../../utils/db';
+import { getTrustedScripts, trustScript } from '../../utils/storage';
 
 interface IdbMockHooks {
   __resetMockData: () => void;
@@ -226,7 +236,40 @@ describe('deleteSkill', () => {
     await resetDbAndMocks();
   });
 
-  it('应在 trustedScripts 清理失败时终止删除并保留 skill 数据', async () => {
+  it('应删除 skill 元数据、文件和信任脚本', async () => {
+    const skillId = 'skill-delete-success';
+    await saveSkill({
+      id: skillId,
+      metadata: {
+        name: 'delete-success',
+        description: '用于成功删除验证',
+      },
+      instructions: 'test',
+      scripts: [{ name: 'main.js', path: 'scripts/main.js', language: 'javascript', trusted: true }],
+      references: [],
+      assets: [],
+      source: 'imported',
+      importedAt: Date.now(),
+      location: '/tmp/delete-success',
+    });
+    await saveSkillFile({
+      skillId,
+      path: 'scripts/main.js',
+      content: new TextEncoder().encode('console.log("ok")').buffer,
+      mimeType: 'application/javascript',
+      size: 17,
+      isText: true,
+    });
+    await trustScript(skillId, 'scripts/main.js');
+
+    await deleteSkill(skillId);
+
+    expect(await getSkill(skillId)).toBeNull();
+    expect(await getSkillFiles(skillId)).toEqual([]);
+    expect((await getTrustedScripts()).some(item => item.skillId === skillId)).toBe(false);
+  });
+
+  it('应在 trustedScripts 清理失败时回滚 skill 元数据和文件', async () => {
     const skillId = 'skill-keep';
     await saveSkill({
       id: skillId,
@@ -242,8 +285,18 @@ describe('deleteSkill', () => {
       importedAt: Date.now(),
       location: '/tmp/keep-skill',
     });
+    await saveSkillFile({
+      skillId,
+      path: 'scripts/keep.js',
+      content: new TextEncoder().encode('console.log("keep")').buffer,
+      mimeType: 'application/javascript',
+      size: 19,
+      isText: true,
+    });
+    await trustScript(skillId, 'scripts/keep.js');
 
     expect(await getSkill(skillId)).not.toBeNull();
+    expect((await getSkillFiles(skillId)).length).toBe(1);
 
     const localStorageArea = (globalThis as any).browser.storage.local;
     const originalSet = localStorageArea.set;
@@ -258,6 +311,8 @@ describe('deleteSkill', () => {
     }
 
     expect(await getSkill(skillId)).not.toBeNull();
+    expect((await getSkillFiles(skillId)).length).toBe(1);
+    expect((await getTrustedScripts()).some(item => item.skillId === skillId)).toBe(true);
   });
 });
 

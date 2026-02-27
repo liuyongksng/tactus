@@ -43,7 +43,6 @@ import {
   getWebSearchEnabled,
   setWebSearchEnabled,
   setCurrentSessionId,
-  getAllSessions,
   getSessionsPaginated,
   createSession,
   updateSession,
@@ -82,9 +81,7 @@ import { extractPageContent, truncateContent } from '../../utils/pageExtractor';
 import {
   clearPdfExtractorRuntimeCache,
   extractPdfContent,
-  formatPdfExtractionProgressText,
   isPdfUrl,
-  type PdfExtractProgress,
 } from '../../utils/pdfExtractor';
 import { getToolStatusText, isMcpTool, parseMcpToolName, type ToolCall, type ToolResult, type SkillInfo } from '../../utils/tools';
 import { getAllSkills, getSkillByName, getSkillFileAsText, type Skill } from '../../utils/skills';
@@ -94,6 +91,11 @@ import { mcpManager, type McpTool } from '../../utils/mcp';
 import { getEnabledMcpServers, watchMcpServers } from '../../utils/mcpStorage';
 import { extractFormulaText } from '../../utils/formulaCopy';
 import { renderMarkdownWithMath } from '../../utils/markdownMath';
+import {
+  buildPdfToolStatus,
+  getExtractPageStatusText,
+  parsePdfCacheClearResponse,
+} from './pdfUi';
 
 // Render markdown to HTML
 function renderMarkdown(content: string): string {
@@ -386,8 +388,8 @@ function copyMessageFallback(content: string, messageKey: string): void {
   textarea.style.opacity = '0';
   document.body.appendChild(textarea);
   
-  textarea.select();
   try {
+    textarea.select();
     const copied = document.execCommand('copy');
     if (!copied) {
       showCopyFailedAlert();
@@ -401,9 +403,9 @@ function copyMessageFallback(content: string, messageKey: string): void {
     }, 2000);
   } catch (error) {
     showCopyFailedAlert();
+  } finally {
+    document.body.removeChild(textarea);
   }
-  
-  document.body.removeChild(textarea);
 }
 
 function hideFormulaContextMenu(): void {
@@ -1475,49 +1477,12 @@ interface ExtractCleanPageContentOptions {
   onStatus?: (statusText: string) => void;
 }
 
-type ExtractPageStatusKey =
-  | 'preparing'
-  | 'checkingPageType'
-  | 'preparingPdf'
-  | 'readingHtml'
-  | 'nestedPdf'
-  | 'parsingHtml';
-
-function getExtractPageStatusText(key: ExtractPageStatusKey): string {
-  const zh = currentLanguage.value === 'zh-CN';
-  switch (key) {
-    case 'preparing':
-      return zh ? '提取页面内容：准备中...' : 'Extracting page content: preparing...';
-    case 'checkingPageType':
-      return zh ? '提取页面内容：正在检查页面类型...' : 'Extracting page content: checking page type...';
-    case 'preparingPdf':
-      return zh ? '提取页面内容：正在准备 PDF 提取...' : 'Extracting page content: preparing PDF extraction...';
-    case 'readingHtml':
-      return zh ? '提取页面内容：正在读取网页源码...' : 'Extracting page content: reading page source...';
-    case 'nestedPdf':
-      return zh ? '提取页面内容：检测到嵌套 PDF，正在提取...' : 'Extracting page content: nested PDF detected, extracting...';
-    case 'parsingHtml':
-      return zh ? '提取页面内容：正在解析网页正文...' : 'Extracting page content: parsing page content...';
-    default:
-      return zh ? '提取页面内容：处理中...' : 'Extracting page content: processing...';
-  }
-}
-
-function buildPdfToolStatus(progress: PdfExtractProgress): string {
-  const progressText = formatPdfExtractionProgressText(
-    progress,
-    currentLanguage.value === 'zh-CN' ? 'zh-CN' : 'en',
-  );
-  return currentLanguage.value === 'zh-CN'
-    ? `提取页面内容：${progressText}`
-    : `Extracting page content: ${progressText}`;
-}
-
 // 使用 Readability + Turndown 提取清洗后的页面内容
 async function extractCleanPageContent(options: ExtractCleanPageContentOptions = {}): Promise<string> {
   const reportStatus = (statusText: string): void => {
     options.onStatus?.(statusText);
   };
+  const statusLanguage = currentLanguage.value === 'zh-CN' ? 'zh-CN' : 'en';
 
   try {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
@@ -1525,15 +1490,15 @@ async function extractCleanPageContent(options: ExtractCleanPageContentOptions =
       return '无法获取当前页面信息';
     }
 
-    reportStatus(getExtractPageStatusText('checkingPageType'));
+    reportStatus(getExtractPageStatusText(statusLanguage, 'checkingPageType'));
 
     if (isPdfUrl(tab.url)) {
-      reportStatus(getExtractPageStatusText('preparingPdf'));
+      reportStatus(getExtractPageStatusText(statusLanguage, 'preparingPdf'));
       const extracted = await extractPdfContent(tab.url, {
         maxPages: maxPdfExtractPages.value,
         maxChars: maxPageContentLength.value,
         onProgress: progress => {
-          reportStatus(buildPdfToolStatus(progress));
+          reportStatus(buildPdfToolStatus(statusLanguage, progress));
         },
       });
       const content = truncateContent(extracted.content, maxPageContentLength.value);
@@ -1550,7 +1515,7 @@ async function extractCleanPageContent(options: ExtractCleanPageContentOptions =
       return metadata;
     }
 
-    reportStatus(getExtractPageStatusText('readingHtml'));
+    reportStatus(getExtractPageStatusText(statusLanguage, 'readingHtml'));
     const results = await browser.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
@@ -1569,12 +1534,12 @@ async function extractCleanPageContent(options: ExtractCleanPageContentOptions =
     }
 
     if (typeof pageData.url === 'string' && isPdfUrl(pageData.url)) {
-      reportStatus(getExtractPageStatusText('nestedPdf'));
+      reportStatus(getExtractPageStatusText(statusLanguage, 'nestedPdf'));
       const extracted = await extractPdfContent(pageData.url, {
         maxPages: maxPdfExtractPages.value,
         maxChars: maxPageContentLength.value,
         onProgress: progress => {
-          reportStatus(buildPdfToolStatus(progress));
+          reportStatus(buildPdfToolStatus(statusLanguage, progress));
         },
       });
       const content = truncateContent(extracted.content, maxPageContentLength.value);
@@ -1599,7 +1564,7 @@ async function extractCleanPageContent(options: ExtractCleanPageContentOptions =
     const rawExtractSites = await getRawExtractSites();
     const useRawExtract = isRawExtractSite(pageData.url, rawExtractSites);
     
-    reportStatus(getExtractPageStatusText('parsingHtml'));
+    reportStatus(getExtractPageStatusText(statusLanguage, 'parsingHtml'));
     const extracted = extractPageContent(doc, pageData.url, { useRawExtract });
     const content = truncateContent(extracted.content, maxPageContentLength.value);
     
@@ -1625,7 +1590,10 @@ async function extractCleanPageContent(options: ExtractCleanPageContentOptions =
 const toolExecutor: ToolExecutor = async (toolCall: ToolCall): Promise<ToolResult> => {
   switch (toolCall.name) {
     case 'extract_page_content': {
-      toolStatus.value = getExtractPageStatusText('preparing');
+      toolStatus.value = getExtractPageStatusText(
+        currentLanguage.value === 'zh-CN' ? 'zh-CN' : 'en',
+        'preparing',
+      );
       const content = await extractCleanPageContent({
         onStatus: (statusText: string) => {
           toolStatus.value = statusText;
@@ -1860,17 +1828,23 @@ async function saveCurrentSession() {
   const latestCompactionMeta = getLatestContextCompactionForSession(sessionId);
   const sessionToSave: ChatSession = {
     ...currentSession.value,
-    messages: JSON.parse(JSON.stringify(messages.value)),
-    apiMessages: JSON.parse(JSON.stringify(latestApiMessages)), // 持久化 API 上下文
-    contextUsage: latestContextUsage ? JSON.parse(JSON.stringify(latestContextUsage)) : undefined, // 持久化上下文统计
-    compressionMeta: latestCompactionMeta ? JSON.parse(JSON.stringify(latestCompactionMeta)) : undefined,
+    messages: messages.value,
+    apiMessages: latestApiMessages,
+    contextUsage: latestContextUsage ?? undefined,
+    compressionMeta: latestCompactionMeta ?? undefined,
   };
   await updateSession(sessionToSave);
+  currentSession.value = sessionToSave;
   currentSession.value.apiMessages = sessionToSave.apiMessages;
   currentSession.value.contextUsage = sessionToSave.contextUsage;
   currentSession.value.compressionMeta = sessionToSave.compressionMeta;
-  // 刷新当前已加载的会话列表
-  await loadInitialSessions();
+  const existingIndex = sessions.value.findIndex(session => session.id === sessionToSave.id);
+  if (existingIndex >= 0) {
+    const nextSessions = [...sessions.value];
+    nextSessions.splice(existingIndex, 1);
+    nextSessions.unshift(sessionToSave);
+    sessions.value = nextSessions;
+  }
 }
 
 // 加载初始会话列表
@@ -2124,7 +2098,7 @@ async function sendMessage() {
       }
       if (pendingImages.value.length === 0 && pendingImagesDraft.length > 0) {
         pendingImages.value = pendingImagesDraft.map(image => ({ ...image }));
-        isImageDragActive.value = true;
+        isImageDragActive.value = false;
       }
     }
   } finally {
@@ -2216,7 +2190,7 @@ async function removeSession(id: string, e: Event) {
     setLastApiMessages([], id);
     clearLastContextUsage(id);
     clearLastContextCompaction(id);
-    sessions.value = await getAllSessions();
+    await loadInitialSessions();
     if (currentSession.value?.id === id) {
       if (sessions.value.length > 0) {
         await loadSession(sessions.value[0]);
@@ -2255,12 +2229,9 @@ async function clearPdfCaches() {
 
   try {
     const response = await browser.runtime.sendMessage({ type: 'PDF_CACHE_CLEAR_ALL' });
-    const normalized = (response && typeof response === 'object')
-      ? (response as { success?: boolean; error?: unknown })
-      : null;
-    if (!normalized || normalized.success === false) {
-      const error = normalized?.error;
-      const errorText = typeof error === 'string' ? error : '未知错误';
+    const parsedResult = parsePdfCacheClearResponse(response);
+    if (!parsedResult.success) {
+      const errorText = parsedResult.errorText ?? '未知错误';
       throw new Error(errorText);
     }
 

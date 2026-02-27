@@ -1,6 +1,14 @@
+import { beforeEach } from 'vitest';
+
 const localStore = new Map<string, unknown>();
 const syncStore = new Map<string, unknown>();
 const sessionStore = new Map<string, unknown>();
+
+beforeEach(() => {
+  localStore.clear();
+  syncStore.clear();
+  sessionStore.clear();
+});
 
 function resolveStore(area: 'local' | 'sync' | 'session'): Map<string, unknown> {
   if (area === 'sync') return syncStore;

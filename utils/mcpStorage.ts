@@ -5,6 +5,7 @@
 
 import { storage } from '@wxt-dev/storage';
 import type { McpServerConfig, McpAuthType } from './mcp';
+import { createMutationGate } from './storageLock';
 
 export type { McpServerConfig, McpAuthType };
 
@@ -13,6 +14,8 @@ export type { McpServerConfig, McpAuthType };
 const mcpServersStorage = storage.defineItem<McpServerConfig[]>('local:mcpServers', {
   fallback: [],
 });
+
+const runMcpServersMutation = createMutationGate('mcp-servers');
 
 // ==================== CRUD 操作 ====================
 
@@ -43,37 +46,41 @@ export async function getMcpServer(id: string): Promise<McpServerConfig | undefi
  * 保存 MCP Server 配置（新增或更新）
  */
 export async function saveMcpServer(server: McpServerConfig): Promise<void> {
-  const servers = await mcpServersStorage.getValue();
-  const index = servers.findIndex(s => s.id === server.id);
-  
-  if (index >= 0) {
-    servers[index] = server;
-  } else {
-    servers.push(server);
-  }
-  
-  await mcpServersStorage.setValue(servers);
+  await runMcpServersMutation(async () => {
+    const servers = await mcpServersStorage.getValue();
+    const index = servers.findIndex(s => s.id === server.id);
+    const nextServers = [...servers];
+    if (index >= 0) {
+      nextServers[index] = server;
+    } else {
+      nextServers.push(server);
+    }
+    await mcpServersStorage.setValue(nextServers);
+  });
 }
 
 /**
  * 删除 MCP Server 配置
  */
 export async function deleteMcpServer(id: string): Promise<void> {
-  const servers = await mcpServersStorage.getValue();
-  await mcpServersStorage.setValue(servers.filter(s => s.id !== id));
+  await runMcpServersMutation(async () => {
+    const servers = await mcpServersStorage.getValue();
+    await mcpServersStorage.setValue(servers.filter(s => s.id !== id));
+  });
 }
 
 /**
  * 切换 MCP Server 启用状态
  */
 export async function toggleMcpServer(id: string, enabled: boolean): Promise<void> {
-  const servers = await mcpServersStorage.getValue();
-  const server = servers.find(s => s.id === id);
-  
-  if (server) {
-    server.enabled = enabled;
-    await mcpServersStorage.setValue(servers);
-  }
+  await runMcpServersMutation(async () => {
+    const servers = await mcpServersStorage.getValue();
+    const index = servers.findIndex(s => s.id === id);
+    if (index < 0) return;
+    const nextServers = [...servers];
+    nextServers[index] = { ...servers[index], enabled };
+    await mcpServersStorage.setValue(nextServers);
+  });
 }
 
 /**

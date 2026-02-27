@@ -393,27 +393,44 @@ export async function saveSkill(skill: Skill): Promise<void> {
   await db.put('skills', skill);
 }
 
-export async function deleteSkill(id: string): Promise<void> {
-  // 先删除 WXT storage 中的信任记录，避免该步骤失败后留下脏数据
-  await removeTrustedScriptsBySkillId(id);
-
+export async function saveSkillWithFiles(skill: Skill, files: SkillFile[]): Promise<void> {
   const db = await getDB();
-  
-  // 删除关联的文件
   const tx = db.transaction(['skills', 'skillFiles'], 'readwrite');
-  
-  // 删除 skill 文件
-  const fileIndex = tx.objectStore('skillFiles').index('by-skillId');
-  let cursor = await fileIndex.openCursor(id);
-  while (cursor) {
-    await cursor.delete();
-    cursor = await cursor.continue();
+  await tx.objectStore('skills').put(skill);
+  const skillFilesStore = tx.objectStore('skillFiles');
+  for (const file of files) {
+    await skillFilesStore.put(file);
   }
-  
-  // 删除 skill 本身
-  await tx.objectStore('skills').delete(id);
-  
   await tx.done;
+}
+
+async function deleteSkillData(db: IDBPDatabase<AppDBSchema>, id: string): Promise<void> {
+  const files = await db.getAllFromIndex('skillFiles', 'by-skillId', id);
+  const tx = db.transaction(['skills', 'skillFiles'], 'readwrite');
+  const filesStore = tx.objectStore('skillFiles');
+  for (const file of files) {
+    await filesStore.delete([file.skillId, file.path]);
+  }
+  await tx.objectStore('skills').delete(id);
+  await tx.done;
+}
+
+export async function deleteSkill(id: string): Promise<void> {
+  const db = await getDB();
+  const [skillSnapshot, fileSnapshots] = await Promise.all([
+    db.get('skills', id),
+    db.getAllFromIndex('skillFiles', 'by-skillId', id),
+  ]);
+
+  await deleteSkillData(db, id);
+  try {
+    await removeTrustedScriptsBySkillId(id);
+  } catch (error) {
+    if (skillSnapshot) {
+      await saveSkillWithFiles(skillSnapshot, fileSnapshots);
+    }
+    throw error;
+  }
 }
 
 // ==================== Skill Files ====================
