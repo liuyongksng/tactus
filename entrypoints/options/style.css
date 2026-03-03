@@ -333,6 +333,34 @@ body {
   margin-bottom: 24px;
 }
 
+.provider-type-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.provider-type-btn {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: all 180ms ease;
+}
+
+.provider-type-btn:hover {
+  border-color: var(--accent);
+}
+
+.provider-type-btn.active {
+  border-color: var(--accent);
+  background: rgba(184, 134, 11, 0.12);
+  color: var(--accent);
+}
+
 .form-group label {
   display: block;
   font-family: var(--font-mono);
@@ -420,6 +448,16 @@ body {
 .form-group input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(184, 134, 11, 0.1);
+}
+
+.api-endpoint-preview {
+  margin-top: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  word-break: break-all;
+  font-family: var(--font-mono);
 }
 
 .form-group select:focus {
@@ -1667,4 +1705,84 @@ body {
 .oauth-hint svg {
   flex-shrink: 0;
   margin-top: 2px;
+}
+
+.preset-actions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.preset-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+
+.preset-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.preset-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--foreground);
+}
+
+.preset-content-preview {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preset-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.preset-edit-btn,
+.preset-delete-btn {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--foreground);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.preset-edit-btn:hover,
+.preset-delete-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.preset-add-btn {
+  align-self: flex-start;
+}
+
+.preset-modal {
+  max-width: 560px;
+}
+
+.preset-content-textarea {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+}
+
+.preset-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }

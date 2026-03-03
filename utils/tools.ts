@@ -300,7 +300,7 @@ export function generateContextPrompt(context?: {
   }
   
   if (context?.sharePageContent) {
-    let hint = '- 用户已勾选"分享当前页面内容"，当用户询问关于当前页面的问题时，你需要先获取页面内容';
+    let hint = '- 用户已点击输入框上方标签页高亮分享当前页面内容，当用户询问关于当前页面的问题时，你需要先获取页面内容';
     if (context.pageInfo) {
       hint += `\n- 当前页面：${context.pageInfo.title}（${context.pageInfo.domain}）`;
       if (context.pageInfo.url) {
@@ -309,7 +309,7 @@ export function generateContextPrompt(context?: {
     }
     hints.push(hint);
   } else {
-    hints.push('- 用户未勾选"分享当前页面内容"，extract_page_content 工具当前不可用');
+    hints.push('- 用户未点击输入框上方标签页高亮分享当前页面内容，extract_page_content 工具当前不可用');
   }
 
   const skillsPrompt = buildSkillsContextPrompt(context?.skills);

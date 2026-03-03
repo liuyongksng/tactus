@@ -17,6 +17,7 @@ export interface AIProvider {
   models: string[];
   selectedModel: string;
   visionModelSupport: Record<string, boolean>;
+  providerType?: ProviderType;
   apiMode: ProviderApiMode;
   systemPromptTemplate: string;
   responsesSystemPromptMode: ResponsesSystemPromptMode;
@@ -26,6 +27,7 @@ export interface AIProvider {
   maxOutputTokens: number | null;
 }
 
+export type ProviderType = 'openai' | 'gemini' | 'anthropic';
 export type ProviderApiMode = 'auto' | 'chat_completions' | 'responses';
 export type ResponsesSystemPromptMode = 'instructions';
 export type ResponsesReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
@@ -43,6 +45,13 @@ export interface TrustedScript {
   skillId: string;
   scriptName: string;
   trustedAt: number;
+}
+
+export interface PresetAction {
+  id: string;
+  name: string;
+  content: string;
+  createdAt: number;
 }
 
 export interface LocalContextCompressionSettings {
@@ -103,6 +112,7 @@ const localContextMaxCompactionsPerTurnStorage = storage.defineItem<number>('loc
 
 const runProvidersMutation = createMutationGate('providers');
 const runTrustedScriptsMutation = createMutationGate('trusted-scripts');
+const runPresetActionsMutation = createMutationGate('preset-actions');
 
 // ==================== Theme Settings ====================
 
@@ -385,6 +395,10 @@ const maxToolCallsStorage = storage.defineItem<number>('local:maxToolCalls', {
   fallback: DEFAULT_MAX_TOOL_CALLS,
 });
 
+const presetActionsStorage = storage.defineItem<PresetAction[]>('local:presetActions', {
+  fallback: [],
+});
+
 export async function getMaxToolCalls(): Promise<number> {
   const value = await maxToolCallsStorage.getValue();
   return normalizePositiveInt(value, DEFAULT_MAX_TOOL_CALLS);
@@ -397,6 +411,60 @@ export async function setMaxToolCalls(value: number): Promise<void> {
 export function watchMaxToolCalls(callback: (value: number) => void): () => void {
   return maxToolCallsStorage.watch((newValue) => {
     callback(normalizePositiveInt(newValue, DEFAULT_MAX_TOOL_CALLS));
+  });
+}
+
+export async function getPresetActions(): Promise<PresetAction[]> {
+  return await presetActionsStorage.getValue();
+}
+
+export async function setPresetActions(presets: PresetAction[]): Promise<void> {
+  await runPresetActionsMutation(async () => {
+    await presetActionsStorage.setValue(presets);
+  });
+}
+
+export async function addPresetAction(name: string, content: string): Promise<PresetAction> {
+  let createdPreset: PresetAction | null = null;
+  await runPresetActionsMutation(async () => {
+    const presets = await presetActionsStorage.getValue();
+    const newPreset: PresetAction = {
+      id: crypto.randomUUID(),
+      name: name.trim(),
+      content: content.trim(),
+      createdAt: Date.now(),
+    };
+    presets.push(newPreset);
+    await presetActionsStorage.setValue(presets);
+    createdPreset = newPreset;
+  });
+  if (!createdPreset) {
+    throw new Error('Failed to create preset action');
+  }
+  return createdPreset;
+}
+
+export async function updatePresetAction(id: string, name: string, content: string): Promise<void> {
+  await runPresetActionsMutation(async () => {
+    const presets = await presetActionsStorage.getValue();
+    const index = presets.findIndex(preset => preset.id === id);
+    if (index < 0) return;
+    presets[index].name = name.trim();
+    presets[index].content = content.trim();
+    await presetActionsStorage.setValue(presets);
+  });
+}
+
+export async function deletePresetAction(id: string): Promise<void> {
+  await runPresetActionsMutation(async () => {
+    const presets = await presetActionsStorage.getValue();
+    await presetActionsStorage.setValue(presets.filter(preset => preset.id !== id));
+  });
+}
+
+export function watchPresetActions(callback: (presets: PresetAction[]) => void): () => void {
+  return presetActionsStorage.watch((newValue) => {
+    callback(newValue);
   });
 }
 
@@ -586,6 +654,13 @@ function normalizeApiMode(value: unknown): ProviderApiMode {
   return 'auto';
 }
 
+function normalizeProviderType(value: unknown): ProviderType {
+  if (value === 'gemini' || value === 'anthropic') {
+    return value;
+  }
+  return 'openai';
+}
+
 function normalizeModelList(models: unknown): string[] {
   if (!Array.isArray(models)) return [];
   return Array.from(
@@ -686,6 +761,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
       : models[0] || '';
   const visionModelSupport = normalizeVisionModelSupport(models, legacyProvider);
   const apiMode = normalizeApiMode(legacyProvider.apiMode);
+  const providerType = normalizeProviderType(legacyProvider.providerType);
   const systemPromptTemplate = normalizeSystemPromptTemplate(legacyProvider.systemPromptTemplate);
   const responsesSystemPromptMode = normalizeResponsesSystemPromptMode(legacyProvider.responsesSystemPromptMode);
   const responsesReasoningEffort = normalizeResponsesReasoningEffort(
@@ -696,7 +772,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
   const contextWindowTokens = normalizeOptionalPositiveInt(legacyProvider.contextWindowTokens);
   const maxOutputTokens = normalizeOptionalPositiveInt(legacyProvider.maxOutputTokens);
 
-  return {
+  const normalizedProvider: AIProvider = {
     id: provider.id,
     name: provider.name,
     baseUrl: provider.baseUrl,
@@ -712,6 +788,10 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     contextWindowTokens,
     maxOutputTokens,
   };
+  if (providerType !== 'openai') {
+    normalizedProvider.providerType = providerType;
+  }
+  return normalizedProvider;
 }
 
 export function isVisionSupportedForModel(

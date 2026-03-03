@@ -32,13 +32,20 @@ import {
   setFontSettings,
   watchFontSettings,
   applyFontSettings,
+  getPresetActions,
+  addPresetAction,
+  updatePresetAction,
+  deletePresetAction,
+  watchPresetActions,
   DEFAULT_SYSTEM_PROMPT_TEMPLATE,
   getReasoningEffortsForModel,
   getDefaultReasoningEffortForModel,
   type AIProvider,
   type ProviderApiMode,
+  type ProviderType,
   type FontFamilyPreset,
   type FontSettings,
+  type PresetAction,
   type TrustedScript,
   type Language,
 } from '../../utils/storage';
@@ -98,9 +105,18 @@ const newRawExtractSite = ref('');
 const fontPreset = ref<FontFamilyPreset>('system');
 const customFontFamily = ref('');
 
+// 预设快捷操作设置
+const presetActions = ref<PresetAction[]>([]);
+const selectedPresetId = ref<string | null>(null);
+const presetFormName = ref('');
+const presetFormContent = ref('');
+const showPresetModal = ref(false);
+const isEditingPreset = ref(false);
+
 // 主题监听
 const unwatchThemeMode = ref<(() => void) | null>(null);
 const unwatchFontSettings = ref<(() => void) | null>(null);
+const unwatchPresetActions = ref<(() => void) | null>(null);
 const systemThemeMediaQuery = ref<MediaQueryList | null>(null);
 
 // 国际化辅助函数
@@ -119,6 +135,7 @@ const isSaving = ref(false);
 const formName = ref('');
 const formBaseUrl = ref('');
 const formApiKey = ref('');
+const formProviderType = ref<ProviderType>('openai');
 const formApiMode = ref<ProviderApiMode>('auto');
 const formSystemPromptTemplate = ref(DEFAULT_SYSTEM_PROMPT_TEMPLATE);
 const formModels = ref<string[]>([]);
@@ -128,6 +145,44 @@ const formContextWindowTokens = ref<number | null>(null);
 const formMaxOutputTokens = ref<number | null>(null);
 
 const isNewProvider = computed(() => selectedProviderId.value === 'new');
+
+function getDefaultBaseUrl(type: ProviderType): string {
+  if (type === 'gemini') return 'https://generativelanguage.googleapis.com';
+  if (type === 'anthropic') return 'https://api.anthropic.com';
+  return '';
+}
+
+function getDefaultProviderName(type: ProviderType): string {
+  if (type === 'gemini') return 'Gemini';
+  if (type === 'anthropic') return 'Anthropic';
+  return '';
+}
+
+const providerNameDynPlaceholder = computed(() => {
+  if (formProviderType.value === 'gemini') return 'Gemini';
+  if (formProviderType.value === 'anthropic') return 'Anthropic';
+  return i18n('providerNamePlaceholder');
+});
+
+const baseUrlDynPlaceholder = computed(() => {
+  const defaultBaseUrl = getDefaultBaseUrl(formProviderType.value);
+  return defaultBaseUrl || i18n('baseUrlPlaceholder');
+});
+
+const apiEndpointPreview = computed(() => {
+  const base = formBaseUrl.value.trim();
+  if (!base) return '';
+
+  const endsWithSlash = base.endsWith('/');
+  const cleanBase = base.replace(/\/+$/, '');
+  if (formProviderType.value === 'gemini') {
+    return endsWithSlash ? `${cleanBase}/models` : `${cleanBase}/v1beta/models`;
+  }
+  if (formProviderType.value === 'anthropic') {
+    return endsWithSlash ? `${cleanBase}/messages` : `${cleanBase}/v1/messages`;
+  }
+  return endsWithSlash ? `${cleanBase}/chat/completions` : `${cleanBase}/v1/chat/completions`;
+});
 
 function normalizeOptionalTokenInput(value: unknown): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
@@ -213,6 +268,8 @@ onMounted(async () => {
   localContextMaxCompactionsPerTurn.value = localCompressionSettings.maxCompactionsPerTurn;
   // 加载原始提取网站设置
   rawExtractSites.value = await getRawExtractSites();
+  // 加载预设快捷操作
+  presetActions.value = await getPresetActions();
   // 加载字体设置
   const initialFontSettings = await getFontSettings();
   fontPreset.value = initialFontSettings.preset;
@@ -238,6 +295,11 @@ onMounted(async () => {
     customFontFamily.value = newSettings.customFamily;
     applyFontSettings(newSettings);
   });
+
+  // 监听预设快捷操作变化
+  unwatchPresetActions.value = watchPresetActions((presets) => {
+    presetActions.value = presets;
+  });
   
   // 加载 MCP Server 配置
   mcpServers.value = await getAllMcpServers();
@@ -259,6 +321,7 @@ async function handleSystemThemeChange() {
 onUnmounted(() => {
   unwatchThemeMode.value?.();
   unwatchFontSettings.value?.();
+  unwatchPresetActions.value?.();
   unwatchMcpServers.value?.();
   systemThemeMediaQuery.value?.removeEventListener('change', handleSystemThemeChange);
 });
@@ -275,6 +338,7 @@ function selectProvider(id: string) {
     formName.value = provider.name;
     formBaseUrl.value = provider.baseUrl;
     formApiKey.value = provider.apiKey;
+    formProviderType.value = provider.providerType || 'openai';
     formApiMode.value = provider.apiMode || 'auto';
     formSystemPromptTemplate.value = provider.systemPromptTemplate || DEFAULT_SYSTEM_PROMPT_TEMPLATE;
     formModels.value = Array.isArray(provider.models) ? [...provider.models] : [];
@@ -291,6 +355,7 @@ function addNewProvider() {
   formName.value = '';
   formBaseUrl.value = '';
   formApiKey.value = '';
+  formProviderType.value = 'openai';
   formApiMode.value = 'auto';
   formSystemPromptTemplate.value = DEFAULT_SYSTEM_PROMPT_TEMPLATE;
   formModels.value = [];
@@ -302,18 +367,35 @@ function addNewProvider() {
 }
 
 async function fetchAvailableModels() {
-  if (!formBaseUrl.value || !formApiKey.value) {
+  const effectiveBaseUrl = formBaseUrl.value.trim() || getDefaultBaseUrl(formProviderType.value);
+  if (!effectiveBaseUrl || !formApiKey.value) {
     alert(i18n('fillRequired'));
     return;
   }
   isFetchingModels.value = true;
   try {
-    const models = await fetchModels(formBaseUrl.value, formApiKey.value);
+    const models = await fetchModels(effectiveBaseUrl, formApiKey.value, formProviderType.value);
     availableModels.value = models.map(m => m.id);
   } catch (e) {
     alert(i18n('fetchModelsFailed'));
   } finally {
     isFetchingModels.value = false;
+  }
+}
+
+function handleProviderTypeChange(type: ProviderType): void {
+  formProviderType.value = type;
+  const knownDefaultUrls = [
+    'https://api.anthropic.com',
+    'https://generativelanguage.googleapis.com',
+    'https://generativelanguage.googleapis.com/v1beta/openai/',
+  ];
+  if (knownDefaultUrls.includes(formBaseUrl.value.trim())) {
+    formBaseUrl.value = '';
+  }
+  const knownDefaultNames = ['Gemini', 'Anthropic', 'Google Gemini', 'Anthropic Claude'];
+  if (knownDefaultNames.includes(formName.value.trim())) {
+    formName.value = '';
   }
 }
 
@@ -344,7 +426,9 @@ function toggleModelVision(model: string): void {
 }
 
 async function saveCurrentProvider() {
-  if (!formName.value || !formBaseUrl.value || !formApiKey.value) {
+  const effectiveName = formName.value.trim() || getDefaultProviderName(formProviderType.value);
+  const effectiveBaseUrl = formBaseUrl.value.trim() || getDefaultBaseUrl(formProviderType.value);
+  if (!effectiveName || !effectiveBaseUrl || !formApiKey.value) {
     alert(i18n('fillRequired'));
     return;
   }
@@ -372,9 +456,10 @@ async function saveCurrentProvider() {
     const maxOutputTokens = normalizedMaxOutputTokens.value;
     const provider: AIProvider = {
       id: isNewProvider.value ? crypto.randomUUID() : selectedProviderId.value!,
-      name: formName.value,
-      baseUrl: formBaseUrl.value,
+      name: effectiveName,
+      baseUrl: effectiveBaseUrl,
       apiKey: formApiKey.value,
+      providerType: formProviderType.value,
       apiMode: formApiMode.value,
       systemPromptTemplate,
       responsesSystemPromptMode: 'instructions',
@@ -571,6 +656,54 @@ async function handleFontPresetChange(preset: FontFamilyPreset): Promise<void> {
 
 async function handleCustomFontFamilyChange(): Promise<void> {
   await persistFontSettings();
+}
+
+function openPresetModal(preset?: PresetAction): void {
+  if (preset) {
+    isEditingPreset.value = true;
+    selectedPresetId.value = preset.id;
+    presetFormName.value = preset.name;
+    presetFormContent.value = preset.content;
+  } else {
+    isEditingPreset.value = false;
+    selectedPresetId.value = null;
+    presetFormName.value = '';
+    presetFormContent.value = '';
+  }
+  showPresetModal.value = true;
+}
+
+function closePresetModal(): void {
+  showPresetModal.value = false;
+  isEditingPreset.value = false;
+  selectedPresetId.value = null;
+  presetFormName.value = '';
+  presetFormContent.value = '';
+}
+
+async function savePresetActionConfig(): Promise<void> {
+  const name = presetFormName.value.trim();
+  const content = presetFormContent.value.trim();
+  if (!name || !content) {
+    alert(i18n('fillRequired'));
+    return;
+  }
+
+  if (isEditingPreset.value && selectedPresetId.value) {
+    await updatePresetAction(selectedPresetId.value, name, content);
+  } else {
+    await addPresetAction(name, content);
+  }
+  presetActions.value = await getPresetActions();
+  closePresetModal();
+}
+
+async function removePresetActionConfig(id: string): Promise<void> {
+  if (!confirm(i18n('confirmDeletePreset'))) {
+    return;
+  }
+  await deletePresetAction(id);
+  presetActions.value = await getPresetActions();
 }
 
 // 原始提取网站管理
@@ -796,12 +929,42 @@ async function handleMcpToggle(id: string, enabled: boolean) {
               </div>
               <div class="form-body">
                 <div class="form-group">
+                  <label>{{ i18n('providerType') }}</label>
+                  <div class="provider-type-selector">
+                    <button
+                      class="provider-type-btn"
+                      :class="{ active: formProviderType === 'openai' }"
+                      @click="handleProviderTypeChange('openai')"
+                      type="button"
+                    >
+                      {{ i18n('providerTypeOpenAI') }}
+                    </button>
+                    <button
+                      class="provider-type-btn"
+                      :class="{ active: formProviderType === 'gemini' }"
+                      @click="handleProviderTypeChange('gemini')"
+                      type="button"
+                    >
+                      {{ i18n('providerTypeGemini') }}
+                    </button>
+                    <button
+                      class="provider-type-btn"
+                      :class="{ active: formProviderType === 'anthropic' }"
+                      @click="handleProviderTypeChange('anthropic')"
+                      type="button"
+                    >
+                      {{ i18n('providerTypeAnthropic') }}
+                    </button>
+                  </div>
+                </div>
+                <div class="form-group">
                   <label>{{ i18n('providerName') }}</label>
-                  <input v-model="formName" :placeholder="i18n('providerNamePlaceholder')" />
+                  <input v-model="formName" :placeholder="providerNameDynPlaceholder" />
                 </div>
                 <div class="form-group">
                   <label>{{ i18n('baseUrl') }}</label>
-                  <input v-model="formBaseUrl" :placeholder="i18n('baseUrlPlaceholder')" />
+                  <input v-model="formBaseUrl" :placeholder="baseUrlDynPlaceholder" />
+                  <p v-if="apiEndpointPreview" class="api-endpoint-preview">API endpoint: {{ apiEndpointPreview }}</p>
                   <p class="form-hint">{{ i18n('baseUrlHint') }}</p>
                 </div>
                 <div class="form-group">
@@ -1201,6 +1364,43 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                 <div class="settings-item-info">
                   <div class="settings-item-label">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M4 6h16M4 12h16M4 18h10"/>
+                    </svg>
+                    <span>{{ i18n('presetActions') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('presetActionsDesc') }}</p>
+                </div>
+                <div class="settings-item-content">
+                  <div v-if="presetActions.length > 0" class="preset-actions-list">
+                    <div v-for="preset in presetActions" :key="preset.id" class="preset-item">
+                      <div class="preset-info">
+                        <div class="preset-name">{{ preset.name }}</div>
+                        <div class="preset-content-preview">
+                          {{ preset.content.length > 50 ? preset.content.slice(0, 50) + '...' : preset.content }}
+                        </div>
+                      </div>
+                      <div class="preset-actions">
+                        <button class="preset-edit-btn" @click="openPresetModal(preset)">
+                          {{ i18n('editMessage') }}
+                        </button>
+                        <button class="preset-delete-btn" @click="removePresetActionConfig(preset.id)">
+                          {{ i18n('delete') }}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <button class="btn btn-primary btn-sm preset-add-btn" @click="openPresetModal()">
+                    {{ i18n('add') }}
+                  </button>
+                </div>
+              </div>
+
+              <div class="settings-divider"></div>
+
+              <div class="settings-item settings-item-vertical">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
                       <path d="M14 2v6h6"/>
                       <path d="M8 13h8"/>
@@ -1550,6 +1750,36 @@ async function handleMcpToggle(id: string, enabled: boolean) {
         </div>
       </template>
     </main>
+
+    <div v-if="showPresetModal" class="modal-overlay" @click.self="closePresetModal">
+      <div class="modal preset-modal">
+        <div class="modal-header">
+          <h3>{{ isEditingPreset ? i18n('editMessage') : i18n('add') }}</h3>
+          <button class="close-btn" @click="closePresetModal">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>{{ i18n('presetName') }}</label>
+            <input v-model="presetFormName" :placeholder="i18n('presetNamePlaceholder')" />
+          </div>
+          <div class="form-group">
+            <label>{{ i18n('presetContent') }}</label>
+            <textarea
+              v-model="presetFormContent"
+              :placeholder="i18n('presetContentPlaceholder')"
+              rows="4"
+              class="preset-content-textarea"
+            ></textarea>
+          </div>
+          <div class="preset-modal-actions">
+            <button class="btn btn-primary" @click="savePresetActionConfig">
+              {{ i18n('save') }}
+            </button>
+            <button class="btn" @click="closePresetModal">{{ i18n('cancel') }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div v-if="showImportModal" class="modal-overlay" @click.self="closeImportModal">
       <div class="modal import-modal">

@@ -89,7 +89,7 @@ export default defineConfig({
   manifest: {
     name: 'Tactus',
     description: 'AI Assistant with OpenAI-compatible API support',
-    version: '1.1.0',
+    version: '1.2.0',
     minimum_chrome_version: '120',
     permissions: ['storage', 'unlimitedStorage', 'activeTab', 'sidePanel', 'scripting', 'identity'],
     host_permissions: ['<all_urls>'],

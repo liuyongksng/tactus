@@ -19,6 +19,7 @@ import {
   getReasoningEffortsForModel,
   isVisionSupportedForModel,
   type AIProvider,
+  type ProviderType,
   type ResponsesReasoningEffort,
 } from './storage';
 import { 
@@ -34,6 +35,8 @@ import {
   type Language,
 } from './tools';
 import type { McpTool } from './mcp';
+import { streamChatAnthropic, streamChatAnthropicSimple, fetchAnthropicModels } from './anthropic';
+import { streamChatGemini, streamChatGeminiSimple, fetchGeminiModels } from './gemini';
 
 export interface ModelInfo {
   id: string;
@@ -624,7 +627,34 @@ function createClient(provider: AIProvider): OpenAI {
   });
 }
 
-export async function fetchModels(baseUrl: string, apiKey: string): Promise<ModelInfo[]> {
+export async function fetchModels(
+  baseUrl: string,
+  apiKey: string,
+  providerType: string | undefined = 'openai',
+): Promise<ModelInfo[]> {
+  return fetchModelsByProvider(baseUrl, apiKey, providerType);
+}
+
+function normalizeProviderType(providerType: string | undefined): ProviderType {
+  if (providerType === 'gemini' || providerType === 'anthropic') {
+    return providerType;
+  }
+  return 'openai';
+}
+
+export async function fetchModelsByProvider(
+  baseUrl: string,
+  apiKey: string,
+  providerType: string | undefined,
+): Promise<ModelInfo[]> {
+  const normalizedProviderType = normalizeProviderType(providerType);
+  if (normalizedProviderType === 'anthropic') {
+    return await fetchAnthropicModels(baseUrl, apiKey);
+  }
+  if (normalizedProviderType === 'gemini') {
+    return await fetchGeminiModels(baseUrl, apiKey);
+  }
+
   try {
     const client = new OpenAI({
       apiKey,
@@ -2491,6 +2521,16 @@ export async function* streamChat(
   retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG,
   previousApiMessages?: ApiMessage[],
 ): AsyncGenerator<StreamEvent, void, unknown> {
+  const providerType = normalizeProviderType(provider.providerType);
+  if (providerType === 'anthropic') {
+    yield* streamChatAnthropic(provider, messages, context, config, retryConfig, previousApiMessages);
+    return;
+  }
+  if (providerType === 'gemini') {
+    yield* streamChatGemini(provider, messages, context, config, retryConfig, previousApiMessages);
+    return;
+  }
+
   if (shouldUseResponsesMode(provider)) {
     try {
       yield* streamChatWithResponses(provider, messages, context, config, retryConfig, previousApiMessages);
@@ -2514,6 +2554,16 @@ export async function* streamChatSimple(
   pageContent?: string,
   retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG
 ): AsyncGenerator<string, void, unknown> {
+  const providerType = normalizeProviderType(provider.providerType);
+  if (providerType === 'anthropic') {
+    yield* streamChatAnthropicSimple(provider, messages, pageContent, retryConfig);
+    return;
+  }
+  if (providerType === 'gemini') {
+    yield* streamChatGeminiSimple(provider, messages, pageContent, retryConfig);
+    return;
+  }
+
   const client = createClient(provider);
   const maxOutputTokens = resolveMaxOutputTokens(provider);
   const allowImages = isVisionSupportedForModel(provider, provider.selectedModel);

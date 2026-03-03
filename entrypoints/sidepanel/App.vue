@@ -32,7 +32,10 @@ import {
   isVisionSupportedForModel,
   getReasoningEffortsForModel,
   getDefaultReasoningEffortForModel,
+  getPresetActions,
+  watchPresetActions,
   type AIProvider,
+  type PresetAction,
   type ResponsesReasoningEffort,
   type Language,
   type ThemeMode,
@@ -99,7 +102,8 @@ import {
 
 // Render markdown to HTML
 function renderMarkdown(content: string): string {
-  return renderMarkdownWithMath(content);
+  const rendered = renderMarkdownWithMath(content);
+  return rendered.replace(/<a\s+/g, '<a target="_blank" rel="noopener noreferrer" ');
 }
 
 // Language state
@@ -139,6 +143,9 @@ const MAX_IMAGE_COUNT = 4;
 const MAX_IMAGE_SIZE_MB = 5;
 const MAX_IMAGE_SIZE_BYTES = MAX_IMAGE_SIZE_MB * 1024 * 1024;
 
+const presetActions = ref<PresetAction[]>([]);
+const unwatchPresetActions = ref<(() => void) | null>(null);
+
 interface ActiveTabInfo {
   title: string;
   faviconUrl?: string;
@@ -159,6 +166,9 @@ const formulaContextMenu = ref({
 });
 const formulaContextMenuRef = ref<HTMLElement | null>(null);
 const chatAbortController = ref<AbortController | null>(null);
+const lockedTabId = ref<number | null>(null);
+
+const isTabLocked = computed(() => isLoading.value && sharePageContent.value);
 
 function createGenerationAbortController(): AbortController {
   chatAbortController.value?.abort();
@@ -634,7 +644,8 @@ async function regenerateResponse(): Promise<void> {
     alert('未配置模型');
     return;
   }
-  
+
+  await captureLockedTab();
   isLoading.value = true;
   toolStatus.value = null;
   const activeAbortController = createGenerationAbortController();
@@ -678,7 +689,7 @@ async function regenerateResponse(): Promise<void> {
     let pageInfo: { domain: string; title: string; url: string } | undefined;
     if (sharePageContent.value) {
       try {
-        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+        const tab = await getActiveOrLockedTab();
         if (tab?.url && tab?.title) {
           const urlObj = new URL(tab.url);
           pageInfo = {
@@ -787,6 +798,7 @@ async function regenerateResponse(): Promise<void> {
     }
   } finally {
     clearGenerationStateIfCurrent(activeAbortController);
+    releaseLockedTab();
     await saveCurrentSession();
   }
 }
@@ -914,9 +926,21 @@ function isEditableElement(target: EventTarget | null): boolean {
   return !!target.closest('textarea, input, [contenteditable="true"], .pending-quote, .pending-images, .inline-selection-quote');
 }
 
+async function getActiveOrLockedTab(): Promise<any | null> {
+  if (lockedTabId.value) {
+    try {
+      return await browser.tabs.get(lockedTabId.value);
+    } catch {
+      // 锁定的标签可能已被关闭，降级到当前激活标签
+    }
+  }
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  return tab ?? null;
+}
+
 async function refreshActiveTabInfo(): Promise<void> {
   try {
-    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    const tab = await getActiveOrLockedTab();
     if (!tab?.url || !tab.title) {
       activeTabInfo.value = null;
       return;
@@ -938,6 +962,26 @@ async function toggleShareCurrentTab(): Promise<void> {
 function toggleWebSearch(): void {
   if (!isResponsesMode.value) return;
   webSearchEnabled.value = !webSearchEnabled.value;
+}
+
+async function captureLockedTab(): Promise<void> {
+  if (!sharePageContent.value) return;
+  try {
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) {
+      lockedTabId.value = tab.id;
+    }
+  } catch (error) {
+    console.error('Failed to capture locked tab:', error);
+  }
+}
+
+function releaseLockedTab(): void {
+  lockedTabId.value = null;
+}
+
+function handlePresetAction(preset: PresetAction): void {
+  inputText.value = preset.content;
 }
 
 function removePendingImage(imageId: string): void {
@@ -1191,6 +1235,7 @@ onMounted(async () => {
   maxPageContentLength.value = await getMaxPageContentLength();
   maxPdfExtractPages.value = await getMaxPdfExtractPages();
   maxToolCalls.value = await getMaxToolCalls();
+  presetActions.value = await getPresetActions();
   
   // 加载语言设置
   currentLanguage.value = await getLanguage();
@@ -1273,6 +1318,10 @@ onMounted(async () => {
   // 监听工具调用次数上限变化
   unwatchMaxToolCalls.value = watchMaxToolCalls((value) => {
     maxToolCalls.value = value;
+  });
+
+  unwatchPresetActions.value = watchPresetActions((presets) => {
+    presetActions.value = presets;
   });
 
   // 监听 skills 变更消息
@@ -1408,6 +1457,8 @@ onUnmounted(() => {
   unwatchMaxPageContentLength.value?.();
   unwatchMaxPdfExtractPages.value?.();
   unwatchMaxToolCalls.value?.();
+  unwatchPresetActions.value?.();
+  releaseLockedTab();
   // 移除系统主题监听
   systemThemeMediaQuery.value?.removeEventListener('change', handleSystemThemeChange);
   // 移除 skills 变更监听
@@ -1451,6 +1502,9 @@ onUnmounted(() => {
 // Watch share page content toggle
 watch(sharePageContent, async (val) => {
   await setSharePageContent(val);
+  if (!val) {
+    releaseLockedTab();
+  }
 });
 
 watch(webSearchEnabled, async (val) => {
@@ -1485,8 +1539,8 @@ async function extractCleanPageContent(options: ExtractCleanPageContentOptions =
   const statusLanguage = currentLanguage.value === 'zh-CN' ? 'zh-CN' : 'en';
 
   try {
-    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab.id || !tab.url) {
+    const tab = await getActiveOrLockedTab();
+    if (!tab?.id || !tab.url) {
       return '无法获取当前页面信息';
     }
 
@@ -1670,7 +1724,12 @@ ${skill.references.length > 0
         };
       }
       
-      const execResult = await executeScript({ skill, script, arguments: scriptArgs });
+      const execResult = await executeScript({
+        skill,
+        script,
+        tabId: lockedTabId.value ?? undefined,
+        arguments: scriptArgs,
+      });
       return {
         tool_call_id: toolCall.id,
         name: toolCall.name,
@@ -1898,7 +1957,8 @@ async function sendMessage() {
     alert(i18n('currentModelNoVision'));
     return;
   }
-  
+
+  await captureLockedTab();
   // 立即设置 loading 状态，防止重复调用
   isLoading.value = true;
   toolStatus.value = null;
@@ -1907,6 +1967,7 @@ async function sendMessage() {
   const provider = await getActiveProvider();
   if (!provider) {
     clearGenerationStateIfCurrent(activeAbortController);
+    releaseLockedTab();
     alert(i18n('noModelConfig'));
     openSettings();
     return;
@@ -1977,7 +2038,7 @@ async function sendMessage() {
     let pageInfo: { domain: string; title: string; url: string } | undefined;
     if (sharePageContent.value) {
       try {
-        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+        const tab = await getActiveOrLockedTab();
         if (tab?.url && tab?.title) {
           const urlObj = new URL(tab.url);
           pageInfo = {
@@ -2103,6 +2164,7 @@ async function sendMessage() {
     }
   } finally {
     clearGenerationStateIfCurrent(activeAbortController);
+    releaseLockedTab();
     // 不自动滚动，让用户自行控制查看位置
     await saveCurrentSession();
   }
@@ -2469,7 +2531,7 @@ function rejectScript() {
   <div class="container">
     <!-- Header -->
     <div class="header">
-      <h1>Tactus</h1>
+      <h1><a href="https://tactus.cc.cd/" target="_blank" rel="noopener noreferrer" class="brand-link">Tactus</a></h1>
       <div class="header-actions">
         <!-- Theme Selector -->
         <div class="theme-selector-wrapper">
@@ -2710,15 +2772,36 @@ function rejectScript() {
 
     <!-- Input area -->
     <div class="input-area">
+      <div v-if="presetActions.length > 0" class="preset-actions-bar">
+        <button
+          v-for="preset in presetActions"
+          :key="preset.id"
+          class="preset-action-btn"
+          :title="preset.content"
+          @click="handlePresetAction(preset)"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12h14"/>
+            <path d="M12 5v14"/>
+          </svg>
+          {{ preset.name }}
+        </button>
+      </div>
       <div class="chat-toolbar">
         <div class="tab-share-row">
           <button
             class="current-tab-chip"
-            :class="{ active: sharePageContent, disabled: !activeTabInfo }"
-            :disabled="!activeTabInfo"
+            :class="{ active: sharePageContent, disabled: !activeTabInfo, locked: isTabLocked, 'glow-animation': isTabLocked }"
+            :disabled="!activeTabInfo || isTabLocked"
             :title="activeTabButtonTitle"
             @click="toggleShareCurrentTab"
           >
+            <span v-if="isTabLocked" class="lock-icon">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="5" y="11" width="14" height="10" rx="2"/>
+                <path d="M8 11V8a4 4 0 0 1 8 0v3"/>
+              </svg>
+            </span>
             <span class="tab-favicon" :class="{ placeholder: !activeTabInfo?.faviconUrl }">
               <img v-if="activeTabInfo?.faviconUrl" :src="activeTabInfo.faviconUrl" alt="" />
               <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

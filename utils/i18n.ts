@@ -25,6 +25,10 @@ export interface Translations {
   providerList: string;
   addProvider: string;
   editProvider: string;
+  providerType: string;
+  providerTypeOpenAI: string;
+  providerTypeGemini: string;
+  providerTypeAnthropic: string;
   providerName: string;
   providerNamePlaceholder: string;
   baseUrl: string;
@@ -157,6 +161,12 @@ export interface Translations {
   rawExtractSitesHint: string;
   addSite: string;
   noSitesConfigured: string;
+  presetActions: string;
+  presetActionsDesc: string;
+  presetName: string;
+  presetNamePlaceholder: string;
+  presetContent: string;
+  presetContentPlaceholder: string;
   
   // MCP 配置
   mcpConfig: string;
@@ -257,6 +267,7 @@ export interface Translations {
   // 确认对话框
   confirmDeleteProvider: string;
   confirmDeleteSkill: string;
+  confirmDeletePreset: string;
   confirmDeleteChat: string;
   confirmDeleteAllChats: string;
   confirmUntrustScript: string;
@@ -309,6 +320,10 @@ const en: Translations = {
   providerList: 'Providers',
   addProvider: 'Add Provider',
   editProvider: 'Edit Provider',
+  providerType: 'Provider Type',
+  providerTypeOpenAI: 'OpenAI Compatible',
+  providerTypeGemini: 'Gemini',
+  providerTypeAnthropic: 'Anthropic',
   providerName: 'Provider Name',
   providerNamePlaceholder: 'e.g. OpenAI, DeepSeek',
   baseUrl: 'Base URL',
@@ -441,6 +456,12 @@ const en: Translations = {
   rawExtractSitesHint: 'Enter domain keywords, e.g. "youtube" will match youtube.com',
   addSite: 'Add',
   noSitesConfigured: 'No sites configured',
+  presetActions: 'Quick Actions',
+  presetActionsDesc: 'Create reusable prompt shortcuts shown in sidepanel input area',
+  presetName: 'Action Name',
+  presetNamePlaceholder: 'e.g. Translate, Summarize',
+  presetContent: 'Action Content',
+  presetContentPlaceholder: 'e.g. Please summarize the following page:',
   
   // MCP 配置
   mcpConfig: 'MCP Configuration',
@@ -541,6 +562,7 @@ const en: Translations = {
   // 确认对话框
   confirmDeleteProvider: 'Are you sure you want to delete this provider?',
   confirmDeleteSkill: 'Are you sure you want to delete this skill?',
+  confirmDeletePreset: 'Are you sure you want to delete this quick action?',
   confirmDeleteChat: 'Are you sure you want to delete this conversation?',
   confirmDeleteAllChats: 'Are you sure you want to delete all conversations? This action cannot be undone.',
   confirmUntrustScript: 'Are you sure you want to untrust script "{name}"?',
@@ -593,6 +615,10 @@ const zhCN: Translations = {
   providerList: '服务商列表',
   addProvider: '添加服务商',
   editProvider: '编辑服务商',
+  providerType: '服务商类型',
+  providerTypeOpenAI: 'OpenAI 兼容',
+  providerTypeGemini: 'Gemini',
+  providerTypeAnthropic: 'Anthropic',
   providerName: '服务商名称',
   providerNamePlaceholder: '例如：OpenAI, DeepSeek',
   baseUrl: 'Base URL',
@@ -725,6 +751,12 @@ const zhCN: Translations = {
   rawExtractSitesHint: '输入域名关键词，如 "youtube" 将匹配 youtube.com',
   addSite: '添加',
   noSitesConfigured: '暂无配置',
+  presetActions: '快捷操作',
+  presetActionsDesc: '创建可复用提示词，显示在侧边栏输入区上方',
+  presetName: '操作名称',
+  presetNamePlaceholder: '例如：翻译、总结',
+  presetContent: '操作内容',
+  presetContentPlaceholder: '例如：请总结以下页面内容：',
   
   // MCP 配置
   mcpConfig: 'MCP 配置',
@@ -825,6 +857,7 @@ const zhCN: Translations = {
   // 确认对话框
   confirmDeleteProvider: '确定删除这个服务商吗？',
   confirmDeleteSkill: '确定删除这个 Skill 吗？',
+  confirmDeletePreset: '确定删除这个快捷操作吗？',
   confirmDeleteChat: '确定删除这个对话吗？',
   confirmDeleteAllChats: '确定删除全部对话吗？此操作不可恢复。',
   confirmUntrustScript: '确定取消信任脚本 "{name}" 吗？',
