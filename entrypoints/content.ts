@@ -86,20 +86,22 @@ export default defineContentScript({
       }
     };
 
-    // 根据设置显示/隐藏悬浮球
-    if (floatingBallEnabled) {
+    // 根据设置显示/隐藏悬浮球（Firefox 不支持从内容脚本触发侧边栏，禁用悬浮球）
+    if (floatingBallEnabled && !import.meta.env.FIREFOX) {
       await createSideFloatingBall();
     }
 
     // 监听设置变化
-    watchFloatingBallEnabled(async (enabled) => {
-      floatingBallEnabled = enabled;
-      if (enabled) {
-        await createSideFloatingBall();
-      } else {
-        removeSideFloatingBall();
-      }
-    });
+    if (!import.meta.env.FIREFOX) {
+      watchFloatingBallEnabled(async (enabled) => {
+        floatingBallEnabled = enabled;
+        if (enabled) {
+          await createSideFloatingBall();
+        } else {
+          removeSideFloatingBall();
+        }
+      });
+    }
 
     // 监听划词引用设置变化
     watchSelectionQuoteEnabled((enabled) => {

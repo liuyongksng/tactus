@@ -12,13 +12,13 @@ export interface Translations {
   delete: string;
   confirm: string;
   loading: string;
-  
+
   // 导航
   navModels: string;
   navSkills: string;
   navMcp: string;
   navSettings: string;
-  
+
   // 模型配置
   modelConfig: string;
   modelConfigDesc: string;
@@ -78,7 +78,7 @@ export interface Translations {
   noProviders: string;
   selectOrAddProvider: string;
   modelsCount: string;
-  
+
   // Skills 管理
   skillsManagement: string;
   skillsManagementDesc: string;
@@ -97,7 +97,7 @@ export interface Translations {
   noSkills: string;
   selectSkillOrImport: string;
   scriptsCount: string;
-  
+
   // 导入 Modal
   importSkillTitle: string;
   importSkillDesc: string;
@@ -109,7 +109,7 @@ export interface Translations {
   jsOnly: string;
   importSuccess: string;
   importWarnings: string;
-  
+
   // 通用设置
   generalSettings: string;
   generalSettingsDesc: string;
@@ -153,7 +153,7 @@ export interface Translations {
   localCompressionMaxCompactionsPerTurnDesc: string;
   localCompressionCompactPromptPlaceholder: string;
   localCompressionCompactPromptDesc: string;
-  
+
   // 原始提取网站设置
   rawExtractSites: string;
   rawExtractSitesDesc: string;
@@ -167,7 +167,7 @@ export interface Translations {
   presetNamePlaceholder: string;
   presetContent: string;
   presetContentPlaceholder: string;
-  
+
   // MCP 配置
   mcpConfig: string;
   mcpConfigDesc: string;
@@ -202,7 +202,7 @@ export interface Translations {
   mcpAuthBearer: string;
   mcpAuthOAuth: string;
   mcpOAuthHint: string;
-  
+
   // Sidepanel
   newChat: string;
   history: string;
@@ -263,7 +263,7 @@ export interface Translations {
   debugCompactionTriggerModelSwitch: string;
   debugCompactionYes: string;
   debugCompactionNo: string;
-  
+
   // 确认对话框
   confirmDeleteProvider: string;
   confirmDeleteSkill: string;
@@ -272,12 +272,12 @@ export interface Translations {
   confirmDeleteAllChats: string;
   confirmUntrustScript: string;
   deleteAllChats: string;
-  
+
   // 错误提示
   fillRequired: string;
   addAtLeastOneModel: string;
   fetchModelsFailed: string;
-  
+
   // 工具状态
   extractingPage: string;
   activatingSkill: string;
@@ -288,7 +288,7 @@ export interface Translations {
   clearingPdfCaches: string;
   clearPdfCachesDone: string;
   clearPdfCachesFailed: string;
-  
+
   // 消息操作
   editMessage: string;
   copyMessage: string;
@@ -297,6 +297,33 @@ export interface Translations {
   copied: string;
   copyFailed: string;
   send: string;
+
+  // 预设操作
+  addPreset: string;
+  editPreset: string;
+  noPresets: string;
+  presetActionSent: string;
+
+  // 数据导入/导出
+  dataTransfer: string;
+  dataTransferDesc: string;
+  exportData: string;
+  exportDataDesc: string;
+  exporting: string;
+  exportSuccess: string;
+  exportFailed: string;
+  importData: string;
+  importDataDesc: string;
+  importDataBtn: string;
+  importingData: string;
+  importDataSuccess: string;
+  importDataFailed: string;
+  importDataInvalidJson: string;
+  importDataInvalidFormat: string;
+  importDataFileError: string;
+  confirmImportData: string;
+  confirmImportDataDesc: string;
+  importStats: string;
 }
 
 // 英文翻译
@@ -307,13 +334,13 @@ const en: Translations = {
   delete: 'Delete',
   confirm: 'Confirm',
   loading: 'Loading...',
-  
+
   // 导航
   navModels: 'Models',
   navSkills: 'Skills',
   navMcp: 'MCP',
   navSettings: 'Settings',
-  
+
   // 模型配置
   modelConfig: 'Model Configuration',
   modelConfigDesc: 'Manage AI providers and models',
@@ -373,7 +400,7 @@ const en: Translations = {
   noProviders: 'No providers configured',
   selectOrAddProvider: 'Select or add a provider',
   modelsCount: '{count} models',
-  
+
   // Skills 管理
   skillsManagement: 'Skills Management',
   skillsManagementDesc: 'Import and manage Agent Skills to extend AI capabilities',
@@ -392,7 +419,7 @@ const en: Translations = {
   noSkills: 'No skills installed',
   selectSkillOrImport: 'Select a skill to view details, or import a new one',
   scriptsCount: '{count} scripts',
-  
+
   // 导入 Modal
   importSkillTitle: 'Import Skill',
   importSkillDesc: 'Select a folder containing SKILL.md to import.',
@@ -404,7 +431,7 @@ const en: Translations = {
   jsOnly: 'JS only',
   importSuccess: 'Import successful with warnings:',
   importWarnings: 'Import successful with warnings:',
-  
+
   // 通用设置
   generalSettings: 'General Settings',
   generalSettingsDesc: 'Configure extension options',
@@ -448,7 +475,7 @@ const en: Translations = {
   localCompressionMaxCompactionsPerTurnDesc: 'Avoid repeated compaction loops in a single turn.',
   localCompressionCompactPromptPlaceholder: 'Optional summary instruction',
   localCompressionCompactPromptDesc: 'Optional local hint for summary style and focus.',
-  
+
   // 原始提取网站设置
   rawExtractSites: 'Raw Extract Sites',
   rawExtractSitesDesc: 'Sites in this list will bypass Readability algorithm and extract raw page content directly',
@@ -462,7 +489,7 @@ const en: Translations = {
   presetNamePlaceholder: 'e.g. Translate, Summarize',
   presetContent: 'Action Content',
   presetContentPlaceholder: 'e.g. Please summarize the following page:',
-  
+
   // MCP 配置
   mcpConfig: 'MCP Configuration',
   mcpConfigDesc: 'Connect to MCP (Model Context Protocol) servers to extend AI capabilities',
@@ -497,7 +524,7 @@ const en: Translations = {
   mcpAuthBearer: 'Bearer Token',
   mcpAuthOAuth: 'OAuth 2.1',
   mcpOAuthHint: 'OAuth authentication will open a browser window for authorization when connecting. The token will be automatically managed.',
-  
+
   // Sidepanel
   newChat: 'New Chat',
   history: 'History',
@@ -558,7 +585,7 @@ const en: Translations = {
   debugCompactionTriggerModelSwitch: 'Model switch',
   debugCompactionYes: 'Yes',
   debugCompactionNo: 'No',
-  
+
   // 确认对话框
   confirmDeleteProvider: 'Are you sure you want to delete this provider?',
   confirmDeleteSkill: 'Are you sure you want to delete this skill?',
@@ -567,12 +594,12 @@ const en: Translations = {
   confirmDeleteAllChats: 'Are you sure you want to delete all conversations? This action cannot be undone.',
   confirmUntrustScript: 'Are you sure you want to untrust script "{name}"?',
   deleteAllChats: 'Delete all chats',
-  
+
   // 错误提示
   fillRequired: 'Please fill in provider name, Base URL and API Key',
   addAtLeastOneModel: 'Please add at least one model',
   fetchModelsFailed: 'Failed to fetch models',
-  
+
   // 工具状态
   extractingPage: 'Extracting page content...',
   activatingSkill: 'Activating Skill: {name}...',
@@ -583,7 +610,7 @@ const en: Translations = {
   clearingPdfCaches: 'Clearing PDF caches...',
   clearPdfCachesDone: 'PDF caches cleared',
   clearPdfCachesFailed: 'Failed to clear PDF caches: {error}',
-  
+
   // 消息操作
   editMessage: 'Edit message',
   copyMessage: 'Copy message',
@@ -592,6 +619,33 @@ const en: Translations = {
   copied: 'Copied!',
   copyFailed: 'Copy failed',
   send: 'Send',
+
+  // 预设操作
+  addPreset: 'Add Action',
+  editPreset: 'Edit Action',
+  noPresets: 'No quick actions configured',
+  presetActionSent: 'Action sent',
+
+  // 数据导入/导出
+  dataTransfer: 'Data Management',
+  dataTransferDesc: 'Export or import all your data including providers, chat history, skills, and settings',
+  exportData: 'Export Data',
+  exportDataDesc: 'Download a backup of all your data as a JSON file',
+  exporting: 'Exporting...',
+  exportSuccess: 'Data exported successfully',
+  exportFailed: 'Export failed',
+  importData: 'Import Data',
+  importDataDesc: 'Restore data from a previously exported backup file. This will overwrite existing data',
+  importDataBtn: 'Select Backup File',
+  importingData: 'Importing...',
+  importDataSuccess: 'Data imported successfully',
+  importDataFailed: 'Import failed',
+  importDataInvalidJson: 'Invalid file: not a valid JSON file',
+  importDataInvalidFormat: 'Invalid file: not a valid Tactus backup file',
+  importDataFileError: 'Failed to read file',
+  confirmImportData: 'Confirm Import',
+  confirmImportDataDesc: 'This will overwrite all your current data (providers, chat history, skills, settings, etc.). This action cannot be undone. Are you sure you want to continue?',
+  importStats: 'Imported: {providers} providers, {chatSessions} chats, {skills} skills, {mcpServers} MCP servers',
 };
 
 // 简体中文翻译
@@ -602,13 +656,13 @@ const zhCN: Translations = {
   delete: '删除',
   confirm: '确定',
   loading: '加载中...',
-  
+
   // 导航
   navModels: '模型配置',
   navSkills: 'Skills 管理',
   navMcp: 'MCP 配置',
   navSettings: '通用设置',
-  
+
   // 模型配置
   modelConfig: '模型配置',
   modelConfigDesc: '管理 AI 服务商和模型',
@@ -668,7 +722,7 @@ const zhCN: Translations = {
   noProviders: '暂无服务商配置',
   selectOrAddProvider: '请选择或添加一个服务商',
   modelsCount: '{count} 个模型',
-  
+
   // Skills 管理
   skillsManagement: 'Skills 管理',
   skillsManagementDesc: '导入和管理 Agent Skills，扩展 AI 能力',
@@ -687,7 +741,7 @@ const zhCN: Translations = {
   noSkills: '暂无已安装的 Skills',
   selectSkillOrImport: '选择一个 Skill 查看详情，或导入新的 Skill',
   scriptsCount: '{count} 个脚本',
-  
+
   // 导入 Modal
   importSkillTitle: '导入 Skill',
   importSkillDesc: '选择包含 SKILL.md 的文件夹进行导入。',
@@ -699,7 +753,7 @@ const zhCN: Translations = {
   jsOnly: '仅 .js',
   importSuccess: '导入成功，但有以下警告：',
   importWarnings: '导入成功，但有以下警告：',
-  
+
   // 通用设置
   generalSettings: '通用设置',
   generalSettingsDesc: '配置扩展的通用选项',
@@ -743,7 +797,7 @@ const zhCN: Translations = {
   localCompressionMaxCompactionsPerTurnDesc: '避免单轮反复压缩导致循环。',
   localCompressionCompactPromptPlaceholder: '可选摘要提示词',
   localCompressionCompactPromptDesc: '可选，用于约束摘要风格和重点。',
-  
+
   // 原始提取网站设置
   rawExtractSites: '原始提取网站',
   rawExtractSitesDesc: '列表中的网站将跳过 Readability 算法，直接提取页面原始内容',
@@ -757,7 +811,7 @@ const zhCN: Translations = {
   presetNamePlaceholder: '例如：翻译、总结',
   presetContent: '操作内容',
   presetContentPlaceholder: '例如：请总结以下页面内容：',
-  
+
   // MCP 配置
   mcpConfig: 'MCP 配置',
   mcpConfigDesc: '连接 MCP (Model Context Protocol) 服务器，扩展 AI 能力',
@@ -792,7 +846,7 @@ const zhCN: Translations = {
   mcpAuthBearer: 'Bearer Token',
   mcpAuthOAuth: 'OAuth 2.1',
   mcpOAuthHint: 'OAuth 认证将在连接时打开浏览器窗口进行授权，Token 将自动管理。',
-  
+
   // Sidepanel
   newChat: '新建对话',
   history: '历史对话',
@@ -853,7 +907,7 @@ const zhCN: Translations = {
   debugCompactionTriggerModelSwitch: '切模型前',
   debugCompactionYes: '是',
   debugCompactionNo: '否',
-  
+
   // 确认对话框
   confirmDeleteProvider: '确定删除这个服务商吗？',
   confirmDeleteSkill: '确定删除这个 Skill 吗？',
@@ -862,12 +916,12 @@ const zhCN: Translations = {
   confirmDeleteAllChats: '确定删除全部对话吗？此操作不可恢复。',
   confirmUntrustScript: '确定取消信任脚本 "{name}" 吗？',
   deleteAllChats: '删除全部对话',
-  
+
   // 错误提示
   fillRequired: '请填写服务商名称、Base URL 和 API Key',
   addAtLeastOneModel: '请至少添加一个模型',
   fetchModelsFailed: '获取模型列表失败',
-  
+
   // 工具状态
   extractingPage: '正在提取网页内容...',
   activatingSkill: '正在激活 Skill: {name}...',
@@ -878,7 +932,7 @@ const zhCN: Translations = {
   clearingPdfCaches: '正在清理 PDF 缓存...',
   clearPdfCachesDone: 'PDF 缓存已清空',
   clearPdfCachesFailed: '清理 PDF 缓存失败：{error}',
-  
+
   // 消息操作
   editMessage: '编辑消息',
   copyMessage: '复制消息',
@@ -887,6 +941,33 @@ const zhCN: Translations = {
   copied: '已复制！',
   copyFailed: '复制失败',
   send: '发送',
+
+  // 预设操作
+  addPreset: '添加操作',
+  editPreset: '编辑操作',
+  noPresets: '暂无快捷操作配置',
+  presetActionSent: '已发送操作',
+
+  // 数据导入/导出
+  dataTransfer: '数据管理',
+  dataTransferDesc: '导出或导入所有数据，包括服务商配置、聊天记录、Skills 和设置',
+  exportData: '导出数据',
+  exportDataDesc: '将所有数据下载为 JSON 备份文件',
+  exporting: '导出中...',
+  exportSuccess: '数据导出成功',
+  exportFailed: '导出失败',
+  importData: '导入数据',
+  importDataDesc: '从之前导出的备份文件恢复数据，将覆盖现有数据',
+  importDataBtn: '选择备份文件',
+  importingData: '导入中...',
+  importDataSuccess: '数据导入成功',
+  importDataFailed: '导入失败',
+  importDataInvalidJson: '无效文件：不是有效的 JSON 文件',
+  importDataInvalidFormat: '无效文件：不是有效的 Tactus 备份文件',
+  importDataFileError: '文件读取失败',
+  confirmImportData: '确认导入',
+  confirmImportDataDesc: '此操作将覆盖所有现有数据（服务商配置、聊天记录、Skills、设置等），且无法撤销。确定要继续吗？',
+  importStats: '已导入：{providers} 个服务商、{chatSessions} 个对话、{skills} 个 Skills、{mcpServers} 个 MCP 服务器',
 };
 
 // 翻译映射
@@ -898,14 +979,14 @@ const translations: Record<Language, Translations> = {
 // 获取翻译文本
 export function t(lang: Language, key: keyof Translations, params?: Record<string, string | number>): string {
   let text = translations[lang][key] || translations['en'][key] || key;
-  
+
   // 替换参数
   if (params) {
     Object.entries(params).forEach(([k, v]) => {
       text = text.split(`{${k}}`).join(String(v));
     });
   }
-  
+
   return text;
 }
 

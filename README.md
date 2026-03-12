@@ -100,11 +100,17 @@ https://github.com/user-attachments/assets/c7737e7e-dd2e-4888-a030-db40b9731f1d
 Download the latest `tactus.zip` file from the official GitHub [Releases page](https://github.com/Castor6/tactus/releases).
 
 ### 2. Install
-- Extract `tactus.zip` to a permanent directory
-- Open `chrome://extensions/` in Chrome
-- Enable `Developer mode` (top right)
-- Click `Load unpacked` (top left)
-- Select the extracted `tactus` folder
+- Chrome / Edge (recommended)
+  - Extract `tactus.zip` to a permanent directory
+  - Open `chrome://extensions/` in Chrome
+  - Enable `Developer mode` (top right)
+  - Click `Load unpacked` (top left)
+  - Select the extracted `tactus` folder
+- Firefox (temporary debug install)
+  - Run `npm run build:firefox`
+  - Open `about:debugging#/runtime/this-firefox`
+  - Click `Load Temporary Add-on`
+  - Select `.output/firefox-mv2/manifest.json`
 
 ## 🛠️ Build from Source
 
@@ -122,11 +128,13 @@ npm install
 3. Run in development mode
 ```bash
 npm run dev
+npm run dev:firefox
 ```
 
 4. Build for production
 ```bash
 npm run build
+npm run build:firefox
 ```
 
 5. Please use the Professional style within the `.claude\skills\design-style` skills to design with a unified extended UI style.

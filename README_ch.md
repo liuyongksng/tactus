@@ -100,11 +100,17 @@ https://github.com/user-attachments/assets/c7737e7e-dd2e-4888-a030-db40b9731f1d
 从官方 Github [发布页面](https://github.com/Castor6/tactus/releases) 下载最新的 `tactus.zip` 文件。
 
 ### 2. 安装
-- 在固定目录解压 `tactus.zip` 。
-- 在 Chrome 中打开 `chrome://extensions/`
-- 启用 `开发者模式`（右上角）
-- 点击 `加载未打包的扩展程序` （左上角）
-- 选择已解压的 `tactus` 文件夹。
+- Chrome / Edge（推荐）
+  - 在固定目录解压 `tactus.zip`
+  - 在 Chrome 中打开 `chrome://extensions/`
+  - 启用 `开发者模式`（右上角）
+  - 点击 `加载未打包的扩展程序`（左上角）
+  - 选择已解压的 `tactus` 文件夹
+- Firefox（临时调试安装）
+  - 运行 `npm run build:firefox`
+  - 打开 `about:debugging#/runtime/this-firefox`
+  - 点击 `临时载入附加组件`
+  - 选择 `.output/firefox-mv2/manifest.json`
 
 ## 🛠️ 从源代码构建
 
@@ -122,11 +128,13 @@ npm install
 3. 开发模式运行
 ```bash
 npm run dev
+npm run dev:firefox
 ```
 
 4. 构建生产版本
 ```bash
 npm run build
+npm run build:firefox
 ```
 
 5. 请使用 `.claude\skills\design-style` skills 中的 Professional 风格，以统一扩展的 UI 风格设计

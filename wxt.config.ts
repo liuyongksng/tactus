@@ -48,10 +48,10 @@ const vendorManualChunks = (id: string): string | undefined => {
 export default defineConfig({
   modules: ['@wxt-dev/module-vue'],
   imports: false,
-  vite: () => ({
+  vite: ({ browser }) => ({
     build: {
-      // Manifest 已约束最低 Chrome 版本，避免为旧环境注入额外兼容代码。
-      target: 'chrome120',
+      // 这两个目标版本都已满足项目当前能力，避免为过旧环境注入额外兼容代码。
+      target: browser === 'firefox' ? 'firefox120' : 'chrome120',
     },
   }),
   hooks: {
@@ -85,37 +85,72 @@ export default defineConfig({
         manualChunks: output?.manualChunks ?? vendorManualChunks,
       };
     },
+    'build:manifestGenerated'(_wxt, manifest) {
+      if (manifest.sidebar_action) {
+        manifest.sidebar_action.default_icon = {
+          16: 'icon/16.png',
+          32: 'icon/32.png',
+          48: 'icon/48.png',
+          128: 'icon/128.png',
+        };
+      }
+    },
   },
-  manifest: {
-    name: 'Tactus',
-    description: 'AI Assistant with OpenAI-compatible API support',
-    version: '1.2.0',
-    minimum_chrome_version: '120',
-    permissions: ['storage', 'unlimitedStorage', 'activeTab', 'sidePanel', 'scripting', 'identity'],
-    host_permissions: ['<all_urls>'],
-    action: {
-      default_title: 'Tactus',
-      default_icon: {
-        16: '/icon/16.png',
-        32: '/icon/32.png',
-        48: '/icon/48.png',
-        128: '/icon/128.png',
+  manifest: ({ browser }) => {
+    const isFirefox = browser === 'firefox';
+    const firefoxExtensionId = process.env.FIREFOX_EXTENSION_ID || 'tactus@local.dev';
+
+    return {
+      name: 'Tactus',
+      description: 'The first browser AI Agent extension with Agent Skills, multi-provider AI, and MCP support',
+      version: '1.3.0',
+      ...(isFirefox ? {} : { minimum_chrome_version: '120' }),
+      permissions: [
+        'storage',
+        'unlimitedStorage',
+        'activeTab',
+        'scripting',
+        'identity',
+        ...(isFirefox ? [] : ['sidePanel']),
+      ],
+      host_permissions: ['<all_urls>'],
+      action: {
+        default_title: 'Tactus',
+        default_icon: {
+          16: '/icon/16.png',
+          32: '/icon/32.png',
+          48: '/icon/48.png',
+          128: '/icon/128.png',
+        },
       },
-    },
-    side_panel: {
-      default_path: 'sidepanel.html',
-    },
-    icons: {
-      16: 'icon/16.png',
-      32: 'icon/32.png',
-      48: 'icon/48.png',
-      128: 'icon/128.png',
-    },
-    web_accessible_resources: [
-      {
-        resources: ['/icon/*'],
-        matches: ['<all_urls>'],
+      ...(isFirefox
+        ? {}
+        : {
+            side_panel: {
+              default_path: 'sidepanel.html',
+            },
+          }),
+      icons: {
+        16: 'icon/16.png',
+        32: 'icon/32.png',
+        48: 'icon/48.png',
+        128: 'icon/128.png',
       },
-    ],
+      web_accessible_resources: [
+        {
+          resources: ['/icon/*'],
+          matches: ['<all_urls>'],
+        },
+      ],
+      ...(isFirefox
+        ? {
+            browser_specific_settings: {
+              gecko: {
+                id: firefoxExtensionId,
+              },
+            },
+          }
+        : {}),
+    };
   },
 });

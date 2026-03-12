@@ -1,3 +1,92 @@
+async function openSidePanel(tabId?: number): Promise<void> {
+  const sidePanelApi = (browser as any).sidePanel;
+  if (sidePanelApi?.open && tabId) {
+    await sidePanelApi.open({ tabId });
+    return;
+  }
+
+  const sidebarActionApi = (browser as any).sidebarAction;
+  if (sidebarActionApi?.open) {
+    await sidebarActionApi.open();
+    return;
+  }
+
+  throw new Error('当前浏览器不支持侧边栏 API');
+}
+
+async function executeMainWorldScript(tabId: number, code: string): Promise<void> {
+  const scriptingApi = (browser as any).scripting;
+  if (scriptingApi?.executeScript) {
+    await scriptingApi.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: (injectedCode: string) => {
+        const script = document.createElement('script');
+        script.textContent = injectedCode;
+        document.documentElement.appendChild(script);
+        script.remove();
+      },
+      args: [code],
+    });
+    return;
+  }
+
+  const tabsApi = (browser as any).tabs;
+  if (tabsApi?.executeScript) {
+    const injectionCode = `
+(() => {
+  const script = document.createElement('script');
+  script.textContent = ${JSON.stringify(code)};
+  (document.documentElement || document.head || document.body).appendChild(script);
+  script.remove();
+})();`;
+    await tabsApi.executeScript(tabId, { code: injectionCode });
+    return;
+  }
+
+  throw new Error('当前浏览器不支持脚本注入 API');
+}
+
+async function readMainWorldResult(tabId: number, key: string): Promise<any> {
+  const scriptingApi = (browser as any).scripting;
+  if (scriptingApi?.executeScript) {
+    const results = await scriptingApi.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: (resultKey: string) => {
+        const result = (window as any)[resultKey];
+        if (result !== undefined && result !== null) {
+          delete (window as any)[resultKey];
+          return result;
+        }
+        return undefined;
+      },
+      args: [key],
+    });
+
+    return results?.[0]?.result;
+  }
+
+  const tabsApi = (browser as any).tabs;
+  if (tabsApi?.executeScript) {
+    const readCode = `
+(() => {
+  const resultKey = ${JSON.stringify(key)};
+  const result = window[resultKey];
+  if (result !== undefined && result !== null) {
+    delete window[resultKey];
+    return result;
+  }
+  return undefined;
+})();`;
+
+    const results = await tabsApi.executeScript(tabId, { code: readCode });
+    return results?.[0];
+  }
+
+  throw new Error('当前浏览器不支持脚本读取 API');
+}
+
 // 执行脚本的核心逻辑
 async function executeScriptInTab(tabId: number, code: string, args: Record<string, any>, scriptId: string): Promise<any> {
   const resultKey = `__skill_result_${scriptId}_${Date.now()}__`;
@@ -20,17 +109,7 @@ async function executeScriptInTab(tabId: number, code: string, args: Record<stri
 `;
 
   // 使用 script 标签注入执行，绕过 CSP
-  await browser.scripting.executeScript({
-    target: { tabId },
-    world: 'MAIN',
-    func: (code: string) => {
-      const script = document.createElement('script');
-      script.textContent = code;
-      document.documentElement.appendChild(script);
-      script.remove();
-    },
-    args: [wrappedCode],
-  });
+  await executeMainWorldScript(tabId, wrappedCode);
 
   // 轮询等待结果，最多 60 秒
   const maxWait = 60000;
@@ -40,23 +119,9 @@ async function executeScriptInTab(tabId: number, code: string, args: Record<stri
   while (waited < maxWait) {
     await new Promise(resolve => setTimeout(resolve, interval));
     waited += interval;
-    
-    const results = await browser.scripting.executeScript({
-      target: { tabId },
-      world: 'MAIN',
-      func: (key: string) => {
-        const result = (window as any)[key];
-        if (result !== undefined && result !== null) {
-          delete (window as any)[key];
-          return result;
-        }
-        return undefined;
-      },
-      args: [resultKey],
-    });
 
     // 检查是否获取到有效结果（必须是包含 success 属性的对象）
-    const execResult = results?.[0]?.result;
+    const execResult = await readMainWorldResult(tabId, resultKey);
     if (execResult && typeof execResult === 'object' && 'success' in execResult) {
       if (execResult.success) {
         return execResult.data;
@@ -532,10 +597,20 @@ export default defineBackground(() => {
     }
   });
 
-  // Open side panel when extension icon is clicked
-  browser.action.onClicked.addListener(async (tab) => {
-    if (tab.id) {
-      await browser.sidePanel.open({ tabId: tab.id });
+  // Open/toggle side panel when extension icon is clicked
+  const actionApi = (browser as any).action ?? (browser as any).browserAction;
+  actionApi?.onClicked?.addListener(async (tab: any) => {
+    try {
+      // Firefox: use sidebarAction.toggle() for open/close behavior
+      const sidebarActionApi = (browser as any).sidebarAction;
+      if (sidebarActionApi?.toggle) {
+        await sidebarActionApi.toggle();
+        return;
+      }
+      // Chrome: fallback to openSidePanel (though setPanelBehavior handles this)
+      await openSidePanel(tab?.id);
+    } catch (error) {
+      console.error('Failed to open side panel:', error);
     }
   });
 
@@ -545,18 +620,33 @@ export default defineBackground(() => {
     const messageType = getMessageType(normalizedMessage);
 
     if (messageType === 'OPEN_SIDEPANEL') {
-      if (sender.tab?.id) {
-        browser.sidePanel.open({ tabId: sender.tab.id });
-      }
+      openSidePanel(sender.tab?.id).catch((error) => {
+        console.error('Failed to open side panel:', error);
+      });
     }
     if (messageType === 'TOGGLE_SIDEPANEL') {
-      if (sender.tab?.id) {
+      if ((browser as any).sidePanel?.open) {
         if (sidePanelPort) {
           // sidepanel 已打开，发送关闭消息
           sidePanelPort.postMessage({ type: 'CLOSE' });
         } else {
           // sidepanel 未打开，打开它
-          browser.sidePanel.open({ tabId: sender.tab.id });
+          openSidePanel(sender.tab?.id).catch((error) => {
+            console.error('Failed to open side panel:', error);
+          });
+        }
+      } else {
+        const sidebarActionApi = (browser as any).sidebarAction;
+        if (sidePanelPort && sidebarActionApi?.close) {
+          sidebarActionApi.close().catch((error: unknown) => {
+            console.error('Failed to close sidebar:', error);
+          });
+        } else if (sidePanelPort) {
+          sidePanelPort.postMessage({ type: 'CLOSE' });
+        } else {
+          openSidePanel(sender.tab?.id).catch((error) => {
+            console.error('Failed to open side panel:', error);
+          });
         }
       }
     }
@@ -602,5 +692,5 @@ export default defineBackground(() => {
   });
 
   // Set side panel behavior
-  browser.sidePanel.setPanelBehavior?.({ openPanelOnActionClick: true });
+  (browser as any).sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true });
 });

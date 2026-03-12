@@ -68,6 +68,12 @@ import {
   type McpAuthType,
 } from '../../utils/mcpStorage';
 import { mcpManager } from '../../utils/mcp';
+import {
+  exportAllData,
+  downloadExportData,
+  readImportFile,
+  importAllData,
+} from '../../utils/dataTransfer';
 
 const activeNav = ref<'models' | 'skills' | 'mcp' | 'settings'>('models');
 
@@ -75,6 +81,7 @@ const activeNav = ref<'models' | 'skills' | 'mcp' | 'settings'>('models');
 const currentLanguage = ref<Language>('en');
 
 // 悬浮球设置
+const isFirefox = import.meta.env.FIREFOX;
 const floatingBallEnabled = ref(true);
 
 // 划词引用设置
@@ -112,6 +119,14 @@ const presetFormName = ref('');
 const presetFormContent = ref('');
 const showPresetModal = ref(false);
 const isEditingPreset = ref(false);
+
+// 数据导入/导出
+const isExporting = ref(false);
+const isImportingData = ref(false);
+const showImportConfirmModal = ref(false);
+const pendingImportFile = ref<File | null>(null);
+const toastMessage = ref('');
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
 // 主题监听
 const unwatchThemeMode = ref<(() => void) | null>(null);
@@ -238,7 +253,8 @@ const unwatchMcpServers = ref<(() => void) | null>(null);
 const isNewMcpServer = computed(() => selectedMcpServerId.value === 'new');
 const selectedMcpServer = computed(() => mcpServers.value.find(s => s.id === selectedMcpServerId.value) || null);
 
-onMounted(async () => {
+// 加载所有数据（用于初始化和导入后刷新）
+async function loadAllData() {
   providers.value = await getAllProviders();
   const active = await getActiveProvider();
   activeProviderId.value = active?.id || null;
@@ -246,19 +262,13 @@ onMounted(async () => {
     selectProvider(activeProviderId.value || providers.value[0].id);
   }
   await loadSkills();
-  // 加载语言设置
   currentLanguage.value = await getLanguage();
-  // 加载悬浮球设置
   floatingBallEnabled.value = await getFloatingBallEnabled();
-  // 加载划词引用设置
   selectionQuoteEnabled.value = await getSelectionQuoteEnabled();
-  // 加载网页字数上限
   maxPageContentLength.value = await getMaxPageContentLength();
-  // 加载 PDF 最大提取页数
   maxPdfExtractPages.value = await getMaxPdfExtractPages();
-  // 加载工具调用上限
   maxToolCalls.value = await getMaxToolCalls();
-  // 加载本地上下文压缩配置
+
   const localCompressionSettings = await getLocalContextCompressionSettings();
   localContextCompressionEnabled.value = localCompressionSettings.enabled;
   localContextAutoCompactTokenLimit.value = localCompressionSettings.autoCompactTokenLimit;
@@ -266,45 +276,40 @@ onMounted(async () => {
   localContextCompressionSummaryMaxTokens.value = localCompressionSettings.summaryMaxTokens;
   localContextCompactPrompt.value = localCompressionSettings.compactPrompt || '';
   localContextMaxCompactionsPerTurn.value = localCompressionSettings.maxCompactionsPerTurn;
-  // 加载原始提取网站设置
+
   rawExtractSites.value = await getRawExtractSites();
-  // 加载预设快捷操作
   presetActions.value = await getPresetActions();
-  // 加载字体设置
+
   const initialFontSettings = await getFontSettings();
   fontPreset.value = initialFontSettings.preset;
   customFontFamily.value = initialFontSettings.customFamily;
   applyFontSettings(initialFontSettings);
-  
-  // 加载并应用主题
+
+  mcpServers.value = await getAllMcpServers();
+
   const themeMode = await getThemeMode();
   applyTheme(themeMode);
-  
-  // 监听系统主题变化
+}
+
+onMounted(async () => {
+  await loadAllData();
+
   systemThemeMediaQuery.value = window.matchMedia('(prefers-color-scheme: dark)');
   systemThemeMediaQuery.value.addEventListener('change', handleSystemThemeChange);
-  
-  // 监听主题变化（跨页面同步）
+
   unwatchThemeMode.value = watchThemeMode((newMode) => {
     applyTheme(newMode);
   });
 
-  // 监听字体变化（跨页面同步）
   unwatchFontSettings.value = watchFontSettings((newSettings) => {
     fontPreset.value = newSettings.preset;
     customFontFamily.value = newSettings.customFamily;
     applyFontSettings(newSettings);
   });
 
-  // 监听预设快捷操作变化
   unwatchPresetActions.value = watchPresetActions((presets) => {
     presetActions.value = presets;
   });
-  
-  // 加载 MCP Server 配置
-  mcpServers.value = await getAllMcpServers();
-  
-  // 监听 MCP Server 配置变化
   unwatchMcpServers.value = watchMcpServers((servers) => {
     mcpServers.value = servers;
   });
@@ -324,6 +329,10 @@ onUnmounted(() => {
   unwatchPresetActions.value?.();
   unwatchMcpServers.value?.();
   systemThemeMediaQuery.value?.removeEventListener('change', handleSystemThemeChange);
+  if (toastTimer) {
+    clearTimeout(toastTimer);
+    toastTimer = null;
+  }
 });
 
 async function loadSkills() {
@@ -517,11 +526,11 @@ async function handleFolderImport(event: Event) {
   const input = event.target as HTMLInputElement;
   const files = input.files;
   if (!files || files.length === 0) return;
-  
+
   isImporting.value = true;
   importError.value = null;
   importWarnings.value = [];
-  
+
   try {
     const result = await importSkillFromFolder(files);
     if (result.success) {
@@ -753,7 +762,7 @@ async function saveMcpServerConfig() {
     alert(i18n('fillRequired'));
     return;
   }
-  
+
   // 验证 URL 格式
   try {
     new URL(mcpFormUrl.value);
@@ -761,7 +770,7 @@ async function saveMcpServerConfig() {
     alert(i18n('mcpInvalidUrl'));
     return;
   }
-  
+
   isMcpSaving.value = true;
   try {
     const server: McpServerConfig = {
@@ -801,15 +810,15 @@ async function testMcpConnection() {
     alert(i18n('mcpEnterUrl'));
     return;
   }
-  
+
   isMcpTesting.value = true;
   mcpTestResult.value = null;
-  
+
   // 对于 OAuth，使用固定 ID 以便复用 token
-  const testId = mcpFormAuthType.value === 'oauth' 
+  const testId = mcpFormAuthType.value === 'oauth'
     ? (isNewMcpServer.value ? 'oauth-test' : selectedMcpServerId.value!)
     : 'test-' + Date.now();
-  
+
   const testConfig: McpServerConfig = {
     id: testId,
     name: 'Test',
@@ -818,16 +827,16 @@ async function testMcpConnection() {
     authToken: mcpFormAuthType.value === 'bearer' ? mcpFormAuthToken.value.trim() || undefined : undefined,
     enabled: true,
   };
-  
+
   // OAuth 可能需要重试（第一次触发授权，第二次使用 token）
   const maxRetries = mcpFormAuthType.value === 'oauth' ? 2 : 1;
-  
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`[MCP Test] 尝试连接 (${attempt}/${maxRetries})`);
       const tools = await mcpManager.connect(testConfig);
       await mcpManager.disconnect(testConfig.id);
-      
+
       mcpTestResult.value = {
         success: true,
         message: i18n('mcpTestSuccess'),
@@ -837,7 +846,7 @@ async function testMcpConnection() {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.log(`[MCP Test] 连接失败 (${attempt}/${maxRetries}):`, errorMessage);
-      
+
       // 如果是最后一次尝试，或者不是 OAuth 相关错误，显示错误
       if (attempt === maxRetries || !errorMessage.toLowerCase().includes('unauthorized')) {
         mcpTestResult.value = {
@@ -848,7 +857,7 @@ async function testMcpConnection() {
       // 否则继续重试
     }
   }
-  
+
   isMcpTesting.value = false;
 }
 
@@ -858,6 +867,81 @@ async function handleMcpToggle(id: string, enabled: boolean) {
   if (selectedMcpServerId.value === id) {
     mcpFormEnabled.value = enabled;
   }
+}
+
+// 数据导出
+async function handleExport() {
+  isExporting.value = true;
+  try {
+    const data = await exportAllData();
+    downloadExportData(data);
+    showToast(i18n('exportSuccess'));
+  } catch {
+    showToast(i18n('exportFailed'));
+  } finally {
+    isExporting.value = false;
+  }
+}
+
+// 选择导入文件 -> 弹出确认
+function handleImportFileSelect(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  pendingImportFile.value = file;
+  showImportConfirmModal.value = true;
+  // 重置 input，允许重复选择同一文件
+  input.value = '';
+}
+
+// 确认导入
+async function confirmImport() {
+  if (!pendingImportFile.value) return;
+  showImportConfirmModal.value = false;
+  isImportingData.value = true;
+  try {
+    const raw = await readImportFile(pendingImportFile.value);
+    const result = await importAllData(raw);
+    if (result.success && result.stats) {
+      showToast(i18n('importStats', {
+        providers: result.stats.providers,
+        chatSessions: result.stats.chatSessions,
+        skills: result.stats.skills,
+        mcpServers: result.stats.mcpServers,
+      }));
+      // 通知其他页面 skills 已更新，确保侧边栏立即刷新 skill 提示词和工具列表
+      browser.runtime.sendMessage({ type: 'SKILLS_CHANGED', action: 'imported' });
+      // 刷新页面数据
+      await loadAllData();
+    } else {
+      const errorKey = result.error === 'INVALID_JSON' ? 'importDataInvalidJson'
+        : result.error === 'INVALID_FORMAT' ? 'importDataInvalidFormat'
+        : result.error === 'FILE_READ_ERROR' ? 'importDataFileError'
+        : 'importDataFailed';
+      showToast(i18n(errorKey));
+    }
+  } catch {
+    showToast(i18n('importDataFailed'));
+  } finally {
+    isImportingData.value = false;
+    pendingImportFile.value = null;
+  }
+}
+
+function cancelImport() {
+  showImportConfirmModal.value = false;
+  pendingImportFile.value = null;
+}
+
+function showToast(message: string) {
+  toastMessage.value = message;
+  if (toastTimer) {
+    clearTimeout(toastTimer);
+  }
+  toastTimer = setTimeout(() => {
+    toastMessage.value = '';
+    toastTimer = null;
+  }, 3000);
 }
 </script>
 
@@ -1222,22 +1306,22 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                 <div class="form-group">
                   <label>{{ i18n('mcpAuthType') }}</label>
                   <div class="auth-type-selector">
-                    <button 
-                      class="auth-type-btn" 
+                    <button
+                      class="auth-type-btn"
                       :class="{ active: mcpFormAuthType === 'none' }"
                       @click="mcpFormAuthType = 'none'"
                     >
                       {{ i18n('mcpAuthNone') }}
                     </button>
-                    <button 
-                      class="auth-type-btn" 
+                    <button
+                      class="auth-type-btn"
                       :class="{ active: mcpFormAuthType === 'bearer' }"
                       @click="mcpFormAuthType = 'bearer'"
                     >
                       {{ i18n('mcpAuthBearer') }}
                     </button>
-                    <button 
-                      class="auth-type-btn" 
+                    <button
+                      class="auth-type-btn"
                       :class="{ active: mcpFormAuthType === 'oauth' }"
                       @click="mcpFormAuthType = 'oauth'"
                     >
@@ -1261,7 +1345,7 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                 </div>
                 <div class="form-group" v-if="!isNewMcpServer">
                   <label>{{ i18n('mcpServerStatus') }}</label>
-                  <button 
+                  <button
                     class="toggle-btn"
                     :class="{ active: mcpFormEnabled }"
                     @click="handleMcpToggle(selectedMcpServerId!, !mcpFormEnabled)"
@@ -1272,7 +1356,7 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                     <span class="toggle-label">{{ mcpFormEnabled ? i18n('mcpEnabled') : i18n('mcpDisabled') }}</span>
                   </button>
                 </div>
-                
+
                 <!-- 测试连接 -->
                 <div class="form-group">
                   <div class="label-row">
@@ -1297,7 +1381,7 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                     </span>
                   </div>
                 </div>
-                
+
                 <div class="form-footer">
                   <button class="btn btn-primary" @click="saveMcpServerConfig" :disabled="isMcpSaving">
                     {{ isMcpSaving ? i18n('saving') : i18n('saveConfig') }}
@@ -1340,15 +1424,15 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                 </div>
                 <div class="settings-item-control">
                   <div class="language-selector">
-                    <button 
-                      class="lang-btn" 
+                    <button
+                      class="lang-btn"
                       :class="{ active: currentLanguage === 'en' }"
                       @click="handleLanguageChange('en')"
                     >
                       English
                     </button>
-                    <button 
-                      class="lang-btn" 
+                    <button
+                      class="lang-btn"
                       :class="{ active: currentLanguage === 'zh-CN' }"
                       @click="handleLanguageChange('zh-CN')"
                     >
@@ -1357,7 +1441,7 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                   </div>
                 </div>
               </div>
-              
+
               <div class="settings-divider"></div>
 
               <div class="settings-item settings-item-vertical">
@@ -1381,7 +1465,7 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                       </div>
                       <div class="preset-actions">
                         <button class="preset-edit-btn" @click="openPresetModal(preset)">
-                          {{ i18n('editMessage') }}
+                          {{ i18n('editPreset') }}
                         </button>
                         <button class="preset-delete-btn" @click="removePresetActionConfig(preset.id)">
                           {{ i18n('delete') }}
@@ -1389,8 +1473,9 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                       </div>
                     </div>
                   </div>
+                  <div v-else class="no-sites">{{ i18n('noPresets') }}</div>
                   <button class="btn btn-primary btn-sm preset-add-btn" @click="openPresetModal()">
-                    {{ i18n('add') }}
+                    {{ i18n('addPreset') }}
                   </button>
                 </div>
               </div>
@@ -1492,8 +1577,10 @@ async function handleMcpToggle(id: string, enabled: boolean) {
               </div>
 
               <div class="settings-divider"></div>
-              
-              <div class="settings-item">
+
+              <div class="settings-divider" v-if="!isFirefox"></div>
+
+              <div class="settings-item" v-if="!isFirefox">
                 <div class="settings-item-info">
                   <div class="settings-item-label">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1505,7 +1592,7 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                   <p class="settings-item-desc">{{ i18n('floatingBallDesc') }}</p>
                 </div>
                 <div class="settings-item-control">
-                  <button 
+                  <button
                     class="toggle-btn"
                     :class="{ active: floatingBallEnabled }"
                     @click="handleFloatingBallToggle(!floatingBallEnabled)"
@@ -1517,9 +1604,9 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                   </button>
                 </div>
               </div>
-              
+
               <div class="settings-divider"></div>
-              
+
               <div class="settings-item">
                 <div class="settings-item-info">
                   <div class="settings-item-label">
@@ -1531,7 +1618,7 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                   <p class="settings-item-desc">{{ i18n('selectionQuoteDesc') }}</p>
                 </div>
                 <div class="settings-item-control">
-                  <button 
+                  <button
                     class="toggle-btn"
                     :class="{ active: selectionQuoteEnabled }"
                     @click="handleSelectionQuoteToggle(!selectionQuoteEnabled)"
@@ -1543,9 +1630,9 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                   </button>
                 </div>
               </div>
-              
+
               <div class="settings-divider"></div>
-              
+
               <div class="settings-item settings-item-vertical">
                 <div class="settings-item-info">
                   <div class="settings-item-label">
@@ -1721,7 +1808,7 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                 </div>
                 <div class="settings-item-content">
                   <div class="site-input-row">
-                    <input 
+                    <input
                       v-model="newRawExtractSite"
                       :placeholder="i18n('rawExtractSitesPlaceholder')"
                       @keydown.enter="handleAddRawExtractSite"
@@ -1745,6 +1832,55 @@ async function handleMcpToggle(id: string, enabled: boolean) {
                   <div v-else class="no-sites">{{ i18n('noSitesConfigured') }}</div>
                 </div>
               </div>
+
+              <div class="settings-divider"></div>
+
+              <div class="settings-item settings-item-vertical">
+                <div class="settings-item-info">
+                  <div class="settings-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                      <polyline points="7 10 12 15 17 10"/>
+                      <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    <span>{{ i18n('dataTransfer') }}</span>
+                  </div>
+                  <p class="settings-item-desc">{{ i18n('dataTransferDesc') }}</p>
+                </div>
+                <div class="settings-item-content">
+                  <div class="data-transfer-actions">
+                    <div class="data-transfer-card">
+                      <div class="data-transfer-card-info">
+                        <span class="data-transfer-card-title">{{ i18n('exportData') }}</span>
+                        <span class="data-transfer-card-desc">{{ i18n('exportDataDesc') }}</span>
+                      </div>
+                      <button class="btn btn-primary btn-sm" @click="handleExport" :disabled="isExporting">
+                        <svg v-if="!isExporting" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                          <polyline points="7 10 12 15 17 10"/>
+                          <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        {{ isExporting ? i18n('exporting') : i18n('exportData') }}
+                      </button>
+                    </div>
+                    <div class="data-transfer-card">
+                      <div class="data-transfer-card-info">
+                        <span class="data-transfer-card-title">{{ i18n('importData') }}</span>
+                        <span class="data-transfer-card-desc">{{ i18n('importDataDesc') }}</span>
+                      </div>
+                      <input type="file" id="data-import-input" accept=".json" @change="handleImportFileSelect" class="hidden-input" />
+                      <label for="data-import-input" class="btn btn-outline btn-sm" :class="{ disabled: isImportingData }">
+                        <svg v-if="!isImportingData" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                          <polyline points="17 8 12 3 7 8"/>
+                          <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                        {{ isImportingData ? i18n('importingData') : i18n('importDataBtn') }}
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1754,7 +1890,7 @@ async function handleMcpToggle(id: string, enabled: boolean) {
     <div v-if="showPresetModal" class="modal-overlay" @click.self="closePresetModal">
       <div class="modal preset-modal">
         <div class="modal-header">
-          <h3>{{ isEditingPreset ? i18n('editMessage') : i18n('add') }}</h3>
+          <h3>{{ isEditingPreset ? i18n('editPreset') : i18n('addPreset') }}</h3>
           <button class="close-btn" @click="closePresetModal">×</button>
         </div>
         <div class="modal-body">
@@ -1772,10 +1908,10 @@ async function handleMcpToggle(id: string, enabled: boolean) {
             ></textarea>
           </div>
           <div class="preset-modal-actions">
-            <button class="btn btn-primary" @click="savePresetActionConfig">
+            <button class="btn btn-outline" @click="closePresetModal">{{ i18n('cancel') }}</button>
+            <button class="btn btn-primary" @click="savePresetActionConfig" :disabled="!presetFormName.trim() || !presetFormContent.trim()">
               {{ i18n('save') }}
             </button>
-            <button class="btn" @click="closePresetModal">{{ i18n('cancel') }}</button>
           </div>
         </div>
       </div>
@@ -1819,5 +1955,38 @@ async function handleMcpToggle(id: string, enabled: boolean) {
         </div>
       </div>
     </div>
+
+    <!-- Data Import Confirm Modal -->
+    <div v-if="showImportConfirmModal" class="modal-overlay" @click.self="cancelImport">
+      <div class="modal confirm-modal">
+        <div class="modal-header">
+          <h3>{{ i18n('confirmImportData') }}</h3>
+          <button class="close-btn" @click="cancelImport">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="confirm-warning">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <p>{{ i18n('confirmImportDataDesc') }}</p>
+          </div>
+          <div class="confirm-actions">
+            <button class="btn btn-outline" @click="cancelImport">{{ i18n('cancel') }}</button>
+            <button class="btn btn-danger" @click="confirmImport">{{ i18n('confirm') }}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <Transition name="toast-fade">
+      <div v-if="toastMessage" class="auto-save-toast">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M20 6L9 17l-5-5"/>
+        </svg>
+        <span>{{ toastMessage }}</span>
+      </div>
+    </Transition>
   </div>
 </template>
