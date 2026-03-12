@@ -65,6 +65,12 @@ import {
   deleteMcpServer,
   type McpServerConfig,
 } from './mcpStorage';
+import {
+  clearOAuthData,
+  getOAuthData,
+  setOAuthData,
+  type McpOAuthData,
+} from './mcpOAuth';
 
 // ==================== 类型定义 ====================
 
@@ -90,6 +96,7 @@ export interface ExportData {
     localContextCompressionSettings: LocalContextCompressionSettings;
     presetActions: PresetAction[];
     mcpServers: McpServerConfig[];
+    mcpOAuthStates: ExportMcpOAuthState[];
     sharePageContent: boolean;
     webSearchEnabled: boolean;
 
@@ -110,6 +117,35 @@ interface ExportSkillFile {
   isText: boolean;
 }
 
+interface ExportMcpOAuthState {
+  serverId: string;
+  data: McpOAuthData;
+}
+
+interface PreparedImportData {
+  providers: AIProvider[];
+  activeProviderId: string | null;
+  trustedScripts: TrustedScript[];
+  themeMode?: ThemeMode;
+  language?: Language;
+  floatingBallEnabled?: boolean;
+  selectionQuoteEnabled?: boolean;
+  fontSettings?: FontSettings;
+  rawExtractSites: string[];
+  maxPageContentLength?: number;
+  maxPdfExtractPages?: number;
+  maxToolCalls?: number;
+  localContextCompressionSettings?: LocalContextCompressionSettings;
+  presetActions: PresetAction[];
+  mcpServers: McpServerConfig[];
+  mcpOAuthStates: ExportMcpOAuthState[];
+  sharePageContent?: boolean;
+  webSearchEnabled?: boolean;
+  chatSessions: ChatSession[];
+  skills: Skill[];
+  skillFiles: SkillFile[];
+}
+
 export interface ImportResult {
   success: boolean;
   error?: string;
@@ -119,6 +155,7 @@ export interface ImportResult {
     skills: number;
     skillFiles: number;
     mcpServers: number;
+    mcpOAuthStates: number;
     presetActions: number;
   };
 }
@@ -189,6 +226,15 @@ export async function exportAllData(): Promise<ExportData> {
     getAllSkills(),
   ]);
 
+  const mcpOAuthStates = (
+    await Promise.all(
+      mcpServers.map(async (server) => ({
+        serverId: server.id,
+        data: await getOAuthData(server.id),
+      })),
+    )
+  ).filter((state) => Object.keys(state.data).length > 0);
+
   // 收集所有 skill 的文件（ArrayBuffer → base64）
   const allSkillFiles: ExportSkillFile[] = [];
   for (const skill of skills) {
@@ -224,6 +270,7 @@ export async function exportAllData(): Promise<ExportData> {
       localContextCompressionSettings,
       presetActions,
       mcpServers,
+      mcpOAuthStates,
       sharePageContent,
       webSearchEnabled,
       chatSessions,
@@ -264,6 +311,156 @@ function validateExportData(data: unknown): data is ExportData {
   return true;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function requireArray<T>(value: unknown, field: string): T[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`INVALID_FORMAT:${field}`);
+  }
+  return value as T[];
+}
+
+function prepareImportData(raw: unknown): PreparedImportData {
+  if (!validateExportData(raw)) {
+    throw new Error('INVALID_FORMAT');
+  }
+
+  const { data } = raw;
+  const exportedSkillFiles = requireArray<ExportSkillFile>(data.skillFiles, 'skillFiles');
+  const exportedMcpOAuthStates = Array.isArray(data.mcpOAuthStates)
+    ? data.mcpOAuthStates as ExportMcpOAuthState[]
+    : [];
+
+  const skillFiles = exportedSkillFiles.map((file) => ({
+    skillId: file.skillId,
+    path: file.path,
+    content: base64ToArrayBuffer(file.contentBase64),
+    mimeType: file.mimeType,
+    size: file.size,
+    isText: file.isText,
+  }));
+
+  const mcpOAuthStates = exportedMcpOAuthStates.map((state) => {
+    if (!isRecord(state) || typeof state.serverId !== 'string' || !isRecord(state.data)) {
+      throw new Error('INVALID_FORMAT:mcpOAuthStates');
+    }
+    return {
+      serverId: state.serverId,
+      data: state.data as McpOAuthData,
+    };
+  });
+
+  return {
+    providers: requireArray<AIProvider>(data.providers, 'providers'),
+    activeProviderId: typeof data.activeProviderId === 'string' || data.activeProviderId === null
+      ? data.activeProviderId
+      : null,
+    trustedScripts: requireArray<TrustedScript>(data.trustedScripts, 'trustedScripts'),
+    themeMode: data.themeMode,
+    language: data.language,
+    floatingBallEnabled: data.floatingBallEnabled,
+    selectionQuoteEnabled: data.selectionQuoteEnabled,
+    fontSettings: data.fontSettings,
+    rawExtractSites: requireArray<string>(data.rawExtractSites, 'rawExtractSites'),
+    maxPageContentLength: data.maxPageContentLength,
+    maxPdfExtractPages: data.maxPdfExtractPages,
+    maxToolCalls: data.maxToolCalls,
+    localContextCompressionSettings: data.localContextCompressionSettings,
+    presetActions: requireArray<PresetAction>(data.presetActions, 'presetActions'),
+    mcpServers: requireArray<McpServerConfig>(data.mcpServers, 'mcpServers'),
+    mcpOAuthStates,
+    sharePageContent: data.sharePageContent,
+    webSearchEnabled: data.webSearchEnabled,
+    chatSessions: requireArray<ChatSession>(data.chatSessions, 'chatSessions'),
+    skills: requireArray<Skill>(data.skills, 'skills'),
+    skillFiles,
+  };
+}
+
+async function replaceAllData(data: PreparedImportData): Promise<void> {
+  const [existingProviders, existingSkills, existingMcpServers, db] = await Promise.all([
+    getAllProviders(),
+    getAllSkills(),
+    getAllMcpServers(),
+    getDB(),
+  ]);
+
+  const oauthServerIds = new Set<string>([
+    ...existingMcpServers.map((server) => server.id),
+    ...data.mcpServers.map((server) => server.id),
+    ...data.mcpOAuthStates.map((state) => state.serverId),
+  ]);
+
+  for (const provider of existingProviders) {
+    await deleteProvider(provider.id);
+  }
+
+  for (const skill of existingSkills) {
+    await removeTrustedScriptsBySkillId(skill.id);
+  }
+
+  for (const server of existingMcpServers) {
+    await deleteMcpServer(server.id);
+  }
+
+  await Promise.all([
+    db.clear('chatSessions'),
+    db.clear('skills'),
+    db.clear('skillFiles'),
+  ]);
+
+  for (const serverId of oauthServerIds) {
+    await clearOAuthData(serverId);
+  }
+
+  for (const provider of data.providers) {
+    await saveProvider(provider);
+  }
+  await setActiveProviderId(data.activeProviderId ?? null);
+
+  for (const trustedScript of data.trustedScripts) {
+    await trustScript(trustedScript.skillId, trustedScript.scriptName);
+  }
+
+  if (data.themeMode) await setThemeMode(data.themeMode);
+  if (data.language) await setLanguage(data.language);
+  if (typeof data.floatingBallEnabled === 'boolean') await setFloatingBallEnabled(data.floatingBallEnabled);
+  if (typeof data.selectionQuoteEnabled === 'boolean') await setSelectionQuoteEnabled(data.selectionQuoteEnabled);
+  if (data.fontSettings) await setFontSettings(data.fontSettings);
+  await setRawExtractSites(data.rawExtractSites);
+  if (typeof data.maxPageContentLength === 'number') await setMaxPageContentLength(data.maxPageContentLength);
+  if (typeof data.maxPdfExtractPages === 'number') await setMaxPdfExtractPages(data.maxPdfExtractPages);
+  if (typeof data.maxToolCalls === 'number') await setMaxToolCalls(data.maxToolCalls);
+  if (data.localContextCompressionSettings) {
+    await setLocalContextCompressionSettings(data.localContextCompressionSettings);
+  }
+  await setPresetActions(data.presetActions);
+  if (typeof data.sharePageContent === 'boolean') await setSharePageContent(data.sharePageContent);
+  if (typeof data.webSearchEnabled === 'boolean') await setWebSearchEnabled(data.webSearchEnabled);
+
+  for (const server of data.mcpServers) {
+    await saveMcpServer(server);
+  }
+
+  for (const state of data.mcpOAuthStates) {
+    await setOAuthData(state.serverId, state.data);
+  }
+
+  for (const session of data.chatSessions) {
+    await db.put('chatSessions', session);
+  }
+
+  for (const skill of data.skills) {
+    await saveSkill(skill);
+  }
+
+  for (const file of data.skillFiles) {
+    await saveSkillFile(file);
+  }
+}
+
 /** 从 JSON 文件读取导入数据 */
 export function readImportFile(file: File): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -283,121 +480,38 @@ export function readImportFile(file: File): Promise<unknown> {
 
 /** 导入所有数据（覆盖式） */
 export async function importAllData(raw: unknown): Promise<ImportResult> {
-  if (!validateExportData(raw)) {
-    return { success: false, error: 'INVALID_FORMAT' };
-  }
-
-  const { data } = raw;
-
+  let snapshot: ExportData | null = null;
   try {
-    // 1. 清空现有数据，确保恢复语义是真正覆盖
-    const [existingProviders, existingSkills, existingMcpServers, db] = await Promise.all([
-      getAllProviders(),
-      getAllSkills(),
-      getAllMcpServers(),
-      getDB(),
-    ]);
-
-    for (const provider of existingProviders) {
-      await deleteProvider(provider.id);
-    }
-
-    for (const skill of existingSkills) {
-      await removeTrustedScriptsBySkillId(skill.id);
-    }
-
-    for (const server of existingMcpServers) {
-      await deleteMcpServer(server.id);
-    }
-
-    await Promise.all([
-      db.clear('chatSessions'),
-      db.clear('skills'),
-      db.clear('skillFiles'),
-    ]);
-
-    // 2. 导入 WXT Storage 配置
-    for (const provider of data.providers) {
-      await saveProvider(provider);
-    }
-    await setActiveProviderId(data.activeProviderId ?? null);
-
-    // 信任脚本
-    if (Array.isArray(data.trustedScripts)) {
-      for (const ts of data.trustedScripts) {
-        await trustScript(ts.skillId, ts.scriptName);
-      }
-    }
-
-    // 通用设置
-    if (data.themeMode) await setThemeMode(data.themeMode);
-    if (data.language) await setLanguage(data.language);
-    if (typeof data.floatingBallEnabled === 'boolean') await setFloatingBallEnabled(data.floatingBallEnabled);
-    if (typeof data.selectionQuoteEnabled === 'boolean') await setSelectionQuoteEnabled(data.selectionQuoteEnabled);
-    if (data.fontSettings) await setFontSettings(data.fontSettings);
-    if (Array.isArray(data.rawExtractSites)) await setRawExtractSites(data.rawExtractSites);
-    if (typeof data.maxPageContentLength === 'number') await setMaxPageContentLength(data.maxPageContentLength);
-    if (typeof data.maxPdfExtractPages === 'number') await setMaxPdfExtractPages(data.maxPdfExtractPages);
-    if (typeof data.maxToolCalls === 'number') await setMaxToolCalls(data.maxToolCalls);
-    if (data.localContextCompressionSettings) {
-      await setLocalContextCompressionSettings(data.localContextCompressionSettings);
-    }
-    if (Array.isArray(data.presetActions)) await setPresetActions(data.presetActions);
-    if (typeof data.sharePageContent === 'boolean') await setSharePageContent(data.sharePageContent);
-    if (typeof data.webSearchEnabled === 'boolean') await setWebSearchEnabled(data.webSearchEnabled);
-
-    // MCP 配置
-    if (Array.isArray(data.mcpServers)) {
-      for (const server of data.mcpServers) {
-        await saveMcpServer(server);
-      }
-    }
-
-    // 3. 导入 IndexedDB 数据
-    // 聊天会话
-    if (Array.isArray(data.chatSessions)) {
-      for (const session of data.chatSessions) {
-        await db.put('chatSessions', session);
-      }
-    }
-
-    // Skills
-    if (Array.isArray(data.skills)) {
-      for (const skill of data.skills) {
-        await saveSkill(skill);
-      }
-    }
-
-    // Skill 文件（base64 → ArrayBuffer）
-    if (Array.isArray(data.skillFiles)) {
-      for (const ef of data.skillFiles) {
-        const file: SkillFile = {
-          skillId: ef.skillId,
-          path: ef.path,
-          content: base64ToArrayBuffer(ef.contentBase64),
-          mimeType: ef.mimeType,
-          size: ef.size,
-          isText: ef.isText,
-        };
-        await saveSkillFile(file);
-      }
-    }
+    const prepared = prepareImportData(raw);
+    snapshot = await exportAllData();
+    await replaceAllData(prepared);
 
     return {
       success: true,
       stats: {
-        providers: data.providers.length,
-        chatSessions: data.chatSessions?.length ?? 0,
-        skills: data.skills?.length ?? 0,
-        skillFiles: data.skillFiles?.length ?? 0,
-        mcpServers: data.mcpServers?.length ?? 0,
-        presetActions: data.presetActions?.length ?? 0,
+        providers: prepared.providers.length,
+        chatSessions: prepared.chatSessions.length,
+        skills: prepared.skills.length,
+        skillFiles: prepared.skillFiles.length,
+        mcpServers: prepared.mcpServers.length,
+        mcpOAuthStates: prepared.mcpOAuthStates.length,
+        presetActions: prepared.presetActions.length,
       },
     };
   } catch (e) {
+    if (snapshot) {
+      try {
+        const rollbackData = prepareImportData(snapshot);
+        await replaceAllData(rollbackData);
+      } catch (rollbackError) {
+        console.error('[dataTransfer] 导入失败且回滚失败:', rollbackError);
+      }
+    }
+
+    const errorMessage = e instanceof Error ? e.message : 'UNKNOWN_ERROR';
     return {
       success: false,
-      error: e instanceof Error ? e.message : 'UNKNOWN_ERROR',
+      error: errorMessage.startsWith('INVALID_FORMAT') ? 'INVALID_FORMAT' : errorMessage,
     };
   }
 }

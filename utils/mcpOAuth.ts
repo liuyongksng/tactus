@@ -18,13 +18,13 @@ function getOAuthStorageKey(serverId: string): `local:${string}` {
   return `local:mcpOAuth_${serverId}`;
 }
 
-async function getOAuthData(serverId: string): Promise<McpOAuthData> {
+export async function getOAuthData(serverId: string): Promise<McpOAuthData> {
   const key = getOAuthStorageKey(serverId);
   const item = storage.defineItem<McpOAuthData>(key, { fallback: {} });
   return await item.getValue();
 }
 
-async function setOAuthData(serverId: string, data: McpOAuthData): Promise<void> {
+export async function setOAuthData(serverId: string, data: McpOAuthData): Promise<void> {
   const key = getOAuthStorageKey(serverId);
   const item = storage.defineItem<McpOAuthData>(key, { fallback: {} });
   await item.setValue(data);

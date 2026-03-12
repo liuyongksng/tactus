@@ -6,6 +6,7 @@
 import { storage } from '@wxt-dev/storage';
 import type { McpServerConfig, McpAuthType } from './mcp';
 import { createMutationGate } from './storageLock';
+import { clearOAuthData } from './mcpOAuth';
 
 export type { McpServerConfig, McpAuthType };
 
@@ -67,6 +68,7 @@ export async function deleteMcpServer(id: string): Promise<void> {
     const servers = await mcpServersStorage.getValue();
     await mcpServersStorage.setValue(servers.filter(s => s.id !== id));
   });
+  await clearOAuthData(id);
 }
 
 /**

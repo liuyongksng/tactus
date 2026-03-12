@@ -45,6 +45,7 @@ export default defineContentScript({
     let selectedText = '';
     let floatingBallEnabled = true;
     let selectionQuoteEnabled = true;
+    const canOpenSidebarFromContent = !import.meta.env.FIREFOX;
     
     // 预先获取图标 URL
     const iconUrl = browser.runtime.getURL('/icon/32.png');
@@ -87,12 +88,12 @@ export default defineContentScript({
     };
 
     // 根据设置显示/隐藏悬浮球（Firefox 不支持从内容脚本触发侧边栏，禁用悬浮球）
-    if (floatingBallEnabled && !import.meta.env.FIREFOX) {
+    if (floatingBallEnabled && canOpenSidebarFromContent) {
       await createSideFloatingBall();
     }
 
     // 监听设置变化
-    if (!import.meta.env.FIREFOX) {
+    if (canOpenSidebarFromContent) {
       watchFloatingBallEnabled(async (enabled) => {
         floatingBallEnabled = enabled;
         if (enabled) {
@@ -128,7 +129,7 @@ export default defineContentScript({
       }
 
       // 如果划词引用功能被禁用，直接返回
-      if (!selectionQuoteEnabled) return;
+      if (!selectionQuoteEnabled || !canOpenSidebarFromContent) return;
 
       if (text && text.length > 0) {
         selectedText = text;
