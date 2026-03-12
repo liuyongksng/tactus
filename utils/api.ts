@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import type { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources/chat/completions';
 import type { ChatMessage } from './db';
 import {
@@ -35,8 +35,7 @@ import {
   type Language,
 } from './tools';
 import type { McpTool } from './mcp';
-import { streamChatAnthropic, streamChatAnthropicSimple, fetchAnthropicModels } from './anthropic';
-import { streamChatGemini, streamChatGeminiSimple, fetchGeminiModels } from './gemini';
+import { loadOpenAIModule, loadAnthropicModule, loadGeminiModule } from './api/provider-loaders';
 
 export interface ModelInfo {
   id: string;
@@ -89,6 +88,11 @@ const ERROR_MESSAGES: Record<string, string> = {
   'UNKNOWN': '发生未知错误，请稍后重试',
 };
 
+function isOpenAIAPIError(error: unknown): error is Error & { status?: number; message?: string } {
+  // 动态导入后不方便直接用 instanceof OpenAI.APIError，这里改为识别 SDK 错误共有的 status 特征。
+  return error instanceof Error && typeof (error as { status?: unknown }).status === 'number';
+}
+
 // 解析错误并分类
 function parseError(error: unknown): ApiError {
   if (error instanceof ApiError) {
@@ -101,15 +105,13 @@ function parseError(error: unknown): ApiError {
   }
 
   // OpenAI SDK 错误
-  if (error instanceof OpenAI.APIError) {
-    const status = error.status;
-    
+  if (isOpenAIAPIError(error)) {
+    const status = (error as { status?: number }).status ?? 0;
+    const message = error.message?.toLowerCase() || '';
     if (status === 401 || status === 403) {
       return new ApiError(ERROR_MESSAGES['AUTH_ERROR'], 'AUTH_ERROR', false, error);
     }
     if (status === 429) {
-      // 检查是否是配额问题
-      const message = error.message?.toLowerCase() || '';
       if (message.includes('quota') || message.includes('billing') || message.includes('insufficient')) {
         return new ApiError(ERROR_MESSAGES['QUOTA_EXCEEDED'], 'QUOTA_EXCEEDED', false, error);
       }
@@ -118,10 +120,10 @@ function parseError(error: unknown): ApiError {
     if (status === 404) {
       return new ApiError(ERROR_MESSAGES['MODEL_NOT_FOUND'], 'MODEL_NOT_FOUND', false, error);
     }
-    if (status === 400) {
+    if (status === 400 || status === 422) {
       return new ApiError(ERROR_MESSAGES['INVALID_REQUEST'], 'INVALID_REQUEST', false, error);
     }
-    if (status && status >= 500) {
+    if (status >= 500) {
       return new ApiError(ERROR_MESSAGES['SERVER_ERROR'], 'SERVER_ERROR', true, error);
     }
   }
@@ -618,12 +620,13 @@ function resolveBaseUrl(baseUrl: string): string {
 }
 
 // 创建 OpenAI 客户端
-function createClient(provider: AIProvider): OpenAI {
+async function createClient(provider: AIProvider): Promise<InstanceType<typeof import('openai').default>> {
+  const { default: OpenAI } = await loadOpenAIModule();
   return new OpenAI({
     apiKey: provider.apiKey,
     baseURL: resolveBaseUrl(provider.baseUrl),
-    dangerouslyAllowBrowser: true, // 浏览器扩展环境需要
-    maxRetries: 0, // 禁用 SDK 内置重试，由代码层统一控制
+    dangerouslyAllowBrowser: true,
+    maxRetries: 0,
   });
 }
 
@@ -649,13 +652,16 @@ export async function fetchModelsByProvider(
 ): Promise<ModelInfo[]> {
   const normalizedProviderType = normalizeProviderType(providerType);
   if (normalizedProviderType === 'anthropic') {
+    const { fetchAnthropicModels } = await loadAnthropicModule();
     return await fetchAnthropicModels(baseUrl, apiKey);
   }
   if (normalizedProviderType === 'gemini') {
+    const { fetchGeminiModels } = await loadGeminiModule();
     return await fetchGeminiModels(baseUrl, apiKey);
   }
 
   try {
+    const { default: OpenAI } = await loadOpenAIModule();
     const client = new OpenAI({
       apiKey,
       baseURL: resolveBaseUrl(baseUrl),
@@ -1416,7 +1422,7 @@ async function* streamChatWithChatCompletions(
     }
   };
   
-  const client = createClient(provider);
+  const client = await createClient(provider);
 
   const contextPrompt = generateContextPrompt(context);
   const systemMessage = buildSystemMessage(provider, contextPrompt);
@@ -2014,7 +2020,7 @@ async function* streamChatWithResponses(
     }
   };
 
-  const client = createClient(provider);
+  const client = await createClient(provider);
 
   const contextPrompt = generateContextPrompt(context);
   const systemMessage = buildSystemMessage(provider, contextPrompt);
@@ -2523,10 +2529,12 @@ export async function* streamChat(
 ): AsyncGenerator<StreamEvent, void, unknown> {
   const providerType = normalizeProviderType(provider.providerType);
   if (providerType === 'anthropic') {
+    const { streamChatAnthropic } = await loadAnthropicModule();
     yield* streamChatAnthropic(provider, messages, context, config, retryConfig, previousApiMessages);
     return;
   }
   if (providerType === 'gemini') {
+    const { streamChatGemini } = await loadGeminiModule();
     yield* streamChatGemini(provider, messages, context, config, retryConfig, previousApiMessages);
     return;
   }
@@ -2556,15 +2564,17 @@ export async function* streamChatSimple(
 ): AsyncGenerator<string, void, unknown> {
   const providerType = normalizeProviderType(provider.providerType);
   if (providerType === 'anthropic') {
+    const { streamChatAnthropicSimple } = await loadAnthropicModule();
     yield* streamChatAnthropicSimple(provider, messages, pageContent, retryConfig);
     return;
   }
   if (providerType === 'gemini') {
+    const { streamChatGeminiSimple } = await loadGeminiModule();
     yield* streamChatGeminiSimple(provider, messages, pageContent, retryConfig);
     return;
   }
 
-  const client = createClient(provider);
+  const client = await createClient(provider);
   const maxOutputTokens = resolveMaxOutputTokens(provider);
   const allowImages = isVisionSupportedForModel(provider, provider.selectedModel);
   const pageContextPrompt = pageContent
@@ -2638,3 +2648,4 @@ export async function* streamChatSimple(
     throw parseError(streamError);
   }
 }
+

@@ -1,7 +1,83 @@
-import { createApp } from 'vue';
-import FloatingButton from '../components/FloatingButton.vue';
-import SideFloatingBall from '../components/SideFloatingBall.vue';
 import { getFloatingBallEnabled, watchFloatingBallEnabled, getSelectionQuoteEnabled, watchSelectionQuoteEnabled } from '../utils/storage';
+
+const CONTENT_SCRIPT_PERF_MARKS = {
+  bootstrapStart: 'content-script-bootstrap-start',
+  listenersReady: 'content-script-listeners-ready',
+  floatingBallMounted: 'content-script-floating-ball-mounted',
+  selectionButtonMounted: 'content-script-selection-button-mounted',
+} as const;
+
+function canUsePerformance(): boolean {
+  return typeof performance !== 'undefined'
+    && typeof performance.mark === 'function'
+    && typeof performance.measure === 'function';
+}
+
+function markContentPerformance(markName: string): void {
+  if (!canUsePerformance()) {
+    return;
+  }
+  performance.mark(markName);
+}
+
+function measureContentPerformance(measureName: string, startMark: string, endMark: string): void {
+  if (!canUsePerformance()) {
+    return;
+  }
+  try {
+    performance.measure(measureName, startMark, endMark);
+  } catch {
+    // 重复测量或缺少 mark 时不影响主流程，方便在真实页面里直接观察。
+  }
+}
+
+type VueModule = typeof import('vue');
+let cachedVueModule: VueModule | null = null;
+async function loadVueModule(): Promise<VueModule> {
+  if (!cachedVueModule) {
+    cachedVueModule = await import('vue');
+  }
+  return cachedVueModule;
+}
+
+interface FloatingButtonModule {
+  createApp: VueModule['createApp'];
+  FloatingButton: typeof import('../components/FloatingButton.vue')['default'];
+}
+
+interface SideFloatingBallModule {
+  createApp: VueModule['createApp'];
+  SideFloatingBall: typeof import('../components/SideFloatingBall.vue')['default'];
+}
+
+let cachedFloatingButtonModule: FloatingButtonModule | null = null;
+let cachedSideFloatingBallModule: SideFloatingBallModule | null = null;
+
+export async function loadFloatingButtonModule(): Promise<FloatingButtonModule> {
+  if (cachedFloatingButtonModule) return cachedFloatingButtonModule;
+  const [vue, module] = await Promise.all([
+    loadVueModule(),
+    import('../components/FloatingButton.vue'),
+  ]);
+  cachedFloatingButtonModule = {
+    createApp: vue.createApp,
+    FloatingButton: module.default,
+  };
+  return cachedFloatingButtonModule;
+}
+
+export async function loadSideFloatingBallModule(): Promise<SideFloatingBallModule> {
+  if (cachedSideFloatingBallModule) return cachedSideFloatingBallModule;
+  const [vue, module] = await Promise.all([
+    loadVueModule(),
+    import('../components/SideFloatingBall.vue'),
+  ]);
+  cachedSideFloatingBallModule = {
+    createApp: vue.createApp,
+    SideFloatingBall: module.default,
+  };
+  return cachedSideFloatingBallModule;
+}
 
 // 获取选区末尾的精确位置（视口坐标，用于 fixed 定位）
 function getSelectionEndPosition(): { x: number; y: number } | null {
@@ -40,6 +116,7 @@ export default defineContentScript({
   cssInjectionMode: 'ui',
 
   async main(ctx) {
+    markContentPerformance(CONTENT_SCRIPT_PERF_MARKS.bootstrapStart);
     let floatingUI: any = null;
     let sideFloatingBallUI: any = null;
     let selectedText = '';
@@ -57,6 +134,7 @@ export default defineContentScript({
     // 创建右侧悬浮球
     const createSideFloatingBall = async () => {
       if (sideFloatingBallUI) return;
+      const { createApp, SideFloatingBall } = await loadSideFloatingBallModule();
       
       sideFloatingBallUI = await createShadowRootUi(ctx, {
         name: 'side-floating-ball',
@@ -77,6 +155,12 @@ export default defineContentScript({
         },
       });
       sideFloatingBallUI.mount();
+      markContentPerformance(CONTENT_SCRIPT_PERF_MARKS.floatingBallMounted);
+      measureContentPerformance(
+        'content-script-bootstrap-to-floating-ball',
+        CONTENT_SCRIPT_PERF_MARKS.bootstrapStart,
+        CONTENT_SCRIPT_PERF_MARKS.floatingBallMounted,
+      );
     };
 
     // 移除悬浮球
@@ -139,6 +223,7 @@ export default defineContentScript({
         if (!position) return;
         
         // 使用 overlay 定位创建浮动按钮，更可靠
+        const { createApp, FloatingButton } = await loadFloatingButtonModule();
         floatingUI = await createShadowRootUi(ctx, {
           name: 'tc-floating-button',
           position: 'overlay',
@@ -172,6 +257,12 @@ export default defineContentScript({
         });
 
         floatingUI.mount();
+        markContentPerformance(CONTENT_SCRIPT_PERF_MARKS.selectionButtonMounted);
+        measureContentPerformance(
+          'content-script-bootstrap-to-selection-button',
+          CONTENT_SCRIPT_PERF_MARKS.bootstrapStart,
+          CONTENT_SCRIPT_PERF_MARKS.selectionButtonMounted,
+        );
       }
     });
 
@@ -187,6 +278,13 @@ export default defineContentScript({
         floatingUI = null;
       }
     });
+
+    markContentPerformance(CONTENT_SCRIPT_PERF_MARKS.listenersReady);
+    measureContentPerformance(
+      'content-script-bootstrap-to-listeners',
+      CONTENT_SCRIPT_PERF_MARKS.bootstrapStart,
+      CONTENT_SCRIPT_PERF_MARKS.listenersReady,
+    );
   },
 });
 

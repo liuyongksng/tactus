@@ -13,6 +13,13 @@ vi.mock('openai', () => {
     }
   }
 
+  class MockAuthenticationError extends MockAPIError {
+    constructor(status: number, message: string) {
+      super(status, message);
+      this.name = 'AuthenticationError';
+    }
+  }
+
   type MockHandler = (...args: unknown[]) => Promise<AsyncIterable<unknown>>;
 
   const state = {
@@ -22,6 +29,7 @@ vi.mock('openai', () => {
 
   class MockOpenAI {
     static APIError = MockAPIError;
+    static AuthenticationError = MockAuthenticationError;
 
     chat = {
       completions: {
@@ -185,6 +193,33 @@ describe('streamChat 主链路', () => {
     ).toBe(true);
     expect(events.some(event => event.type === 'content' && event.content === 'retry-success')).toBe(true);
     expect(events[events.length - 1]).toEqual({ type: 'done' });
+  });
+
+  it('OpenAI 状态码子类错误仍应映射为友好 ApiError', async () => {
+    const openaiMock = (await import('openai')) as unknown as OpenAIMockHooks;
+    const OpenAIModule = (await import('openai')) as unknown as {
+      default: { AuthenticationError: new (status: number, message: string) => Error };
+    };
+    const MockAuthenticationError = OpenAIModule.default.AuthenticationError;
+
+    openaiMock.__queueChatCreate(async () => {
+      throw new MockAuthenticationError(401, 'bad key');
+    });
+
+    await expect(
+      collectEvents(
+        streamChat(
+          createProvider({ apiMode: 'chat_completions' }),
+          [createUserMessage('auth failure')],
+          undefined,
+          { enableTools: false },
+          RETRY_CONFIG,
+        ),
+      ),
+    ).rejects.toMatchObject({
+      code: 'AUTH_ERROR',
+      message: 'API 密钥无效或已过期，请检查配置',
+    });
   });
 
   it('chat.completions 请求应注入 max_completion_tokens', async () => {
@@ -971,3 +1006,4 @@ describe('streamChat 主链路', () => {
     expect(events.some(event => event.type === 'content' && event.content.includes('建议 OCR'))).toBe(true);
   });
 });
+

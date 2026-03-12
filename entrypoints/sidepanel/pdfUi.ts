@@ -1,7 +1,7 @@
 import {
   formatPdfExtractionProgressText,
   type PdfExtractProgress,
-} from '../../utils/pdfExtractor';
+} from '../../utils/pdfProgress';
 
 export type PdfStatusLanguage = 'zh-CN' | 'en';
 

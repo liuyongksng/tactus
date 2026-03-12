@@ -46,6 +46,12 @@ const vendorManualChunks = (id: string): string | undefined => {
 };
 
 export default defineConfig({
+  analysis: {
+    enabled: process.env.WXT_BUNDLE_ANALYZE === 'true',
+    keepArtifacts: true,
+    open: false,
+    outputFile: '.analysis/stats.html',
+  },
   modules: ['@wxt-dev/module-vue'],
   imports: false,
   vite: ({ browser }) => ({

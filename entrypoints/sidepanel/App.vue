@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, shallowRef, triggerRef, onMounted, onUnmounted, nextTick, watch, computed } from 'vue';
 import {
-  getAllProviders,
   getProvider,
   saveProvider as saveProviderToDB,
   getActiveProvider,
@@ -10,21 +9,15 @@ import {
   watchActiveProviderId,
   getLanguage,
   watchLanguage,
-  getThemeMode,
   setThemeMode,
   watchThemeMode,
   applyTheme,
-  getFontSettings,
   watchFontSettings,
   applyFontSettings,
   getResolvedTheme,
-  getSelectionQuoteEnabled,
   watchSelectionQuoteEnabled,
-  getMaxPageContentLength,
   watchMaxPageContentLength,
-  getMaxPdfExtractPages,
   watchMaxPdfExtractPages,
-  getMaxToolCalls,
   watchMaxToolCalls,
   getLocalContextCompressionSettings,
   getRawExtractSites,
@@ -32,7 +25,6 @@ import {
   isVisionSupportedForModel,
   getReasoningEffortsForModel,
   getDefaultReasoningEffortForModel,
-  getPresetActions,
   watchPresetActions,
   type AIProvider,
   type PresetAction,
@@ -41,9 +33,7 @@ import {
   type ThemeMode,
 } from '../../utils/storage';
 import {
-  getSharePageContent,
   setSharePageContent,
-  getWebSearchEnabled,
   setWebSearchEnabled,
   setCurrentSessionId,
   getSessionsPaginated,
@@ -80,31 +70,27 @@ import {
   resolveAutoCompactLimit,
   shouldCompactPreTurn,
 } from '../../utils/localCompression';
-import { extractPageContent, truncateContent } from '../../utils/pageExtractor';
-import {
-  clearPdfExtractorRuntimeCache,
-  extractPdfContent,
-  isPdfUrl,
-} from '../../utils/pdfExtractor';
 import { getToolStatusText, isMcpTool, parseMcpToolName, type ToolCall, type ToolResult, type SkillInfo } from '../../utils/tools';
 import { getAllSkills, getSkillByName, getSkillFileAsText, type Skill } from '../../utils/skills';
 import { executeScript, setScriptConfirmCallback, type ScriptConfirmationRequest } from '../../utils/skillsExecutor';
 import { t, type Translations } from '../../utils/i18n';
-import { mcpManager, type McpTool } from '../../utils/mcp';
-import { getEnabledMcpServers, watchMcpServers } from '../../utils/mcpStorage';
+import type { McpTool } from '../../utils/mcp';
 import { extractFormulaText } from '../../utils/formulaCopy';
-import { renderMarkdownWithMath } from '../../utils/markdownMath';
 import {
   buildPdfToolStatus,
   getExtractPageStatusText,
   parsePdfCacheClearResponse,
 } from './pdfUi';
-
-// Render markdown to HTML
-function renderMarkdown(content: string): string {
-  const rendered = renderMarkdownWithMath(content);
-  return rendered.replace(/<a\s+/g, '<a target="_blank" rel="noopener noreferrer" ');
-}
+import {
+  SIDEPANEL_PERF_MARKS,
+  loadSidepanelShellState,
+  markSidepanelPerformance,
+  measureSidepanelPerformance,
+  scheduleSidepanelDeferredWork,
+} from './useBootstrap';
+import { createMcpWarmup } from './useMcpWarmup';
+import { createMarkdownRenderer } from './renderers/markdownRenderer';
+import { loadPageExtractorModule, loadPdfExtractorModule } from './extractors/contentModules';
 
 // Language state
 const currentLanguage = ref<Language>('en');
@@ -124,6 +110,15 @@ function showCopyFailedAlert(): void {
 
 // State
 const messages = shallowRef<ChatMessage[]>([]);
+const markdownRenderer = createMarkdownRenderer(() => {
+  triggerRef(messages);
+});
+
+function renderMarkdown(content: string): string {
+  const rendered = markdownRenderer.render(content);
+  return rendered.replace(/<a\s+/g, '<a target="_blank" rel="noopener noreferrer" ');
+}
+
 const inputText = ref('');
 const sharePageContent = ref(false);
 const webSearchEnabled = ref(false);
@@ -660,6 +655,7 @@ async function regenerateResponse(): Promise<void> {
     messages.value.push(assistantMessage);
     triggerRef(messages);
     scrollToBottom();
+    await warmupDeferredCapabilities();
     
     // 使用 ReAct 范式的流式聊天
     const localCompression = await getLocalContextCompressionSettings();
@@ -832,6 +828,14 @@ const pendingScriptConfirm = ref<{
 const mcpTools = ref<McpTool[]>([]);
 const mcpConnecting = ref(false);
 const unwatchMcpServers = ref<(() => void) | null>(null);
+const mcpWarmup = createMcpWarmup({
+  onConnectingChange: (connecting) => {
+    mcpConnecting.value = connecting;
+  },
+  onToolsChange: (tools) => {
+    mcpTools.value = tools;
+  },
+});
 
 // Computed
 const activeProvider = computed(() => {
@@ -1224,41 +1228,83 @@ let sidepanelSelectionMousedownHandler: ((event: MouseEvent) => void) | null = n
 let formulaMenuPointerdownHandler: ((event: PointerEvent) => void) | null = null;
 let formulaMenuKeydownHandler: ((event: KeyboardEvent) => void) | null = null;
 let formulaMenuScrollHandler: (() => void) | null = null;
+let cancelDeferredWarmup: (() => void) | null = null;
+let deferredCapabilitiesPromise: Promise<void> | null = null;
+let deferredCapabilitiesMeasured = false;
+
+async function consumePendingQuote(): Promise<void> {
+  const result = await browser.storage.local.get('pendingQuote');
+  if (result.pendingQuote) {
+    pendingQuote.value = result.pendingQuote as string;
+    await browser.storage.local.remove('pendingQuote');
+  }
+}
+
+function markDeferredCapabilitiesReady(): void {
+  if (deferredCapabilitiesMeasured) {
+    return;
+  }
+
+  deferredCapabilitiesMeasured = true;
+  markSidepanelPerformance(SIDEPANEL_PERF_MARKS.capabilitiesReady);
+  measureSidepanelPerformance(
+    'sidepanel-shell-to-capabilities',
+    SIDEPANEL_PERF_MARKS.shellReady,
+    SIDEPANEL_PERF_MARKS.capabilitiesReady,
+  );
+}
+
+function warmupDeferredCapabilities(): Promise<void> {
+  if (!deferredCapabilitiesPromise) {
+    deferredCapabilitiesPromise = Promise.allSettled([
+      getAllSkills().then((skills) => {
+        installedSkills.value = skills;
+      }),
+      mcpWarmup.prewarm(),
+      consumePendingQuote(),
+    ]).then(() => {
+      markDeferredCapabilitiesReady();
+    });
+  }
+
+  return deferredCapabilitiesPromise;
+}
 
 onMounted(async () => {
-  providers.value = await getAllProviders();
-  const activeProvider = await getActiveProvider();
-  activeProviderId.value = activeProvider?.id || null;
-  sharePageContent.value = await getSharePageContent();
-  webSearchEnabled.value = await getWebSearchEnabled();
-  selectionQuoteEnabled.value = await getSelectionQuoteEnabled();
-  maxPageContentLength.value = await getMaxPageContentLength();
-  maxPdfExtractPages.value = await getMaxPdfExtractPages();
-  maxToolCalls.value = await getMaxToolCalls();
-  presetActions.value = await getPresetActions();
-  
-  // 加载语言设置
-  currentLanguage.value = await getLanguage();
-  
-  // 加载主题设置
-  currentThemeMode.value = await getThemeMode();
-  applyTheme(currentThemeMode.value);
-  applyFontSettings(await getFontSettings());
+  const shellState = await loadSidepanelShellState();
+  providers.value = shellState.providers;
+  activeProviderId.value = shellState.activeProviderId;
+  sharePageContent.value = shellState.sharePageContent;
+  webSearchEnabled.value = shellState.webSearchEnabled;
+  selectionQuoteEnabled.value = shellState.selectionQuoteEnabled;
+  maxPageContentLength.value = shellState.maxPageContentLength;
+  maxPdfExtractPages.value = shellState.maxPdfExtractPages;
+  maxToolCalls.value = shellState.maxToolCalls;
+  presetActions.value = shellState.presetActions;
+  currentLanguage.value = shellState.language;
+  currentThemeMode.value = shellState.themeMode;
+  applyTheme(shellState.themeMode);
+  applyFontSettings(shellState.fontSettings);
+  markSidepanelPerformance(SIDEPANEL_PERF_MARKS.shellReady);
+  measureSidepanelPerformance(
+    'sidepanel-bootstrap-to-shell',
+    SIDEPANEL_PERF_MARKS.bootstrapStart,
+    SIDEPANEL_PERF_MARKS.shellReady,
+  );
+
+  await nextTick();
+  if (textareaRef.value) {
+    markSidepanelPerformance(SIDEPANEL_PERF_MARKS.inputReady);
+    measureSidepanelPerformance(
+      'sidepanel-bootstrap-to-input',
+      SIDEPANEL_PERF_MARKS.bootstrapStart,
+      SIDEPANEL_PERF_MARKS.inputReady,
+    );
+  }
   
   // 监听系统主题变化
   systemThemeMediaQuery.value = window.matchMedia('(prefers-color-scheme: dark)');
   systemThemeMediaQuery.value.addEventListener('change', handleSystemThemeChange);
-  
-  // 加载已安装的 Skills
-  installedSkills.value = await getAllSkills();
-  
-  // 初始化 MCP 连接
-  await initMcpConnections();
-  
-  // 监听 MCP Server 配置变化
-  unwatchMcpServers.value = watchMcpServers(async () => {
-    await initMcpConnections();
-  });
   
   // 设置脚本确认回调
   setScriptConfirmCallback(async (request) => {
@@ -1270,6 +1316,10 @@ onMounted(async () => {
   
   currentSession.value = null;
   messages.value = [];
+
+  unwatchMcpServers.value = await mcpWarmup.watchConfigChanges(async () => {
+    await mcpWarmup.prewarm();
+  });
 
   // 监听 providers 变化（跨页面同步）
   unwatchProviders.value = watchProviders((newProviders) => {
@@ -1342,13 +1392,6 @@ onMounted(async () => {
   browser.tabs.onUpdated.addListener(tabsUpdatedListener);
   await refreshActiveTabInfo();
 
-  // Check for pending quote from content script
-  const result = await browser.storage.local.get('pendingQuote');
-  if (result.pendingQuote) {
-    pendingQuote.value = result.pendingQuote as string;
-    await browser.storage.local.remove('pendingQuote');
-  }
-
   // Listen for storage changes (for pendingQuote only)
   storageChangeListener = async (changes) => {
     if (changes.pendingQuote?.newValue) {
@@ -1380,6 +1423,8 @@ onMounted(async () => {
   document.addEventListener('pointerdown', formulaMenuPointerdownHandler);
   document.addEventListener('keydown', formulaMenuKeydownHandler);
   document.addEventListener('scroll', formulaMenuScrollHandler, true);
+
+  cancelDeferredWarmup = scheduleSidepanelDeferredWork(() => warmupDeferredCapabilities());
 });
 
 // Skills 变更消息处理
@@ -1388,36 +1433,6 @@ function handleSkillsChanged(message: any) {
     getAllSkills().then(skills => {
       installedSkills.value = skills;
     });
-  }
-}
-
-// MCP 连接初始化
-async function initMcpConnections() {
-  mcpConnecting.value = true;
-  mcpTools.value = [];
-  
-  try {
-    // 先断开所有现有连接
-    await mcpManager.disconnectAll();
-    
-    // 获取启用的 MCP Server 配置
-    const enabledServers = await getEnabledMcpServers();
-    
-    // 连接每个 Server 并收集工具
-    const allTools: McpTool[] = [];
-    for (const server of enabledServers) {
-      try {
-        const tools = await mcpManager.connect(server);
-        allTools.push(...tools);
-        console.log(`[MCP] 已连接 ${server.name}，获取 ${tools.length} 个工具`);
-      } catch (error) {
-        console.error(`[MCP] 连接 ${server.name} 失败:`, error);
-      }
-    }
-    
-    mcpTools.value = allTools;
-  } finally {
-    mcpConnecting.value = false;
   }
 }
 
@@ -1448,12 +1463,15 @@ const currentThemeIcon = computed(() => {
 onUnmounted(() => {
   chatAbortController.value?.abort();
   chatAbortController.value = null;
+  cancelDeferredWarmup?.();
+  cancelDeferredWarmup = null;
   unwatchProviders.value?.();
   unwatchActiveProviderId.value?.();
   unwatchLanguage.value?.();
   unwatchThemeMode.value?.();
   unwatchFontSettings.value?.();
   unwatchSelectionQuoteEnabled.value?.();
+  unwatchMcpServers.value?.();
   unwatchMaxPageContentLength.value?.();
   unwatchMaxPdfExtractPages.value?.();
   unwatchMaxToolCalls.value?.();
@@ -1496,7 +1514,7 @@ onUnmounted(() => {
     debugRefreshTimer = null;
   }
   // 断开所有 MCP 连接
-  mcpManager.disconnectAll();
+  void mcpWarmup.disconnectAll();
 });
 
 // Watch share page content toggle
@@ -1566,15 +1584,18 @@ async function extractCleanPageContent(options: ExtractCleanPageContentOptions =
 
     reportStatus(getExtractPageStatusText(statusLanguage, 'checkingPageType'));
 
-    if (isPdfUrl(tab.url)) {
+    const pdfExtractorModule = await loadPdfExtractorModule();
+
+    if (pdfExtractorModule.isPdfUrl(tab.url)) {
       reportStatus(getExtractPageStatusText(statusLanguage, 'preparingPdf'));
-      const extracted = await extractPdfContent(tab.url, {
+      const extracted = await pdfExtractorModule.extractPdfContent(tab.url, {
         maxPages: maxPdfExtractPages.value,
         maxChars: maxPageContentLength.value,
         onProgress: progress => {
           reportStatus(buildPdfToolStatus(statusLanguage, progress));
         },
       });
+      const { truncateContent } = await loadPageExtractorModule();
       const content = truncateContent(extracted.content, maxPageContentLength.value);
       const metadata = [
         `# ${extracted.title || tab.title || 'PDF 文档'}`,
@@ -1602,15 +1623,16 @@ async function extractCleanPageContent(options: ExtractCleanPageContentOptions =
       return '无法获取页面内容';
     }
 
-    if (typeof pageData.url === 'string' && isPdfUrl(pageData.url)) {
+    if (typeof pageData.url === 'string' && pdfExtractorModule.isPdfUrl(pageData.url)) {
       reportStatus(getExtractPageStatusText(statusLanguage, 'nestedPdf'));
-      const extracted = await extractPdfContent(pageData.url, {
+      const extracted = await pdfExtractorModule.extractPdfContent(pageData.url, {
         maxPages: maxPdfExtractPages.value,
         maxChars: maxPageContentLength.value,
         onProgress: progress => {
           reportStatus(buildPdfToolStatus(statusLanguage, progress));
         },
       });
+      const { truncateContent } = await loadPageExtractorModule();
       const content = truncateContent(extracted.content, maxPageContentLength.value);
       const metadata = [
         `# ${extracted.title || pageData.title || 'PDF 文档'}`,
@@ -1634,6 +1656,7 @@ async function extractCleanPageContent(options: ExtractCleanPageContentOptions =
     const useRawExtract = isRawExtractSite(pageData.url, rawExtractSites);
     
     reportStatus(getExtractPageStatusText(statusLanguage, 'parsingHtml'));
+    const { extractPageContent, truncateContent } = await loadPageExtractorModule();
     const extracted = extractPageContent(doc, pageData.url, { useRawExtract });
     const content = truncateContent(extracted.content, maxPageContentLength.value);
     
@@ -1790,7 +1813,8 @@ ${skill.references.length > 0
       if (isMcpTool(toolCall.name)) {
         const parsed = parseMcpToolName(toolCall.name);
         if (parsed) {
-          const mcpResult = await mcpManager.callTool(
+          const mcpModule = await import('../../utils/mcp');
+          const mcpResult = await mcpModule.mcpManager.callTool(
             parsed.serverId,
             parsed.toolName,
             toolCall.arguments
@@ -1961,7 +1985,7 @@ async function sendMessage() {
   const inputTextDraft = inputText.value;
   const text = inputTextDraft.trim();
   const hasImages = pendingImages.value.length > 0;
-  const pendingQuoteDraft = pendingQuote.value;
+  let pendingQuoteDraft = pendingQuote.value;
   const pendingImagesDraft = pendingImages.value.map(image => ({ ...image }));
   if ((!text && !hasImages) || isLoading.value || isEditing.value) {
     return;
@@ -1986,6 +2010,11 @@ async function sendMessage() {
     alert(i18n('noModelConfig'));
     openSettings();
     return;
+  }
+
+  if (!pendingQuoteDraft) {
+    await consumePendingQuote();
+    pendingQuoteDraft = pendingQuote.value;
   }
 
   if (!currentSession.value) {
@@ -2024,6 +2053,7 @@ async function sendMessage() {
     };
     messages.value.push(assistantMessage);
     triggerRef(messages);
+    await warmupDeferredCapabilities();
 
     // 使用 ReAct 范式的流式聊天
     const localCompression = await getLocalContextCompressionSettings();
@@ -2312,7 +2342,8 @@ async function clearPdfCaches() {
       throw new Error(errorText);
     }
 
-    clearPdfExtractorRuntimeCache();
+    const pdfExtractorModule = await loadPdfExtractorModule();
+    pdfExtractorModule.clearPdfExtractorRuntimeCache();
     const doneText = i18n('clearPdfCachesDone');
     toolStatus.value = doneText;
     setTimeout(() => {
@@ -3177,3 +3208,4 @@ function rejectScript() {
     </div>
   </div>
 </template>
+

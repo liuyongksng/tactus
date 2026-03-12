@@ -2,6 +2,9 @@ import { createApp } from 'vue';
 import App from './App.vue';
 import 'katex/dist/katex.min.css';
 import './style.css';
+import { SIDEPANEL_PERF_MARKS, markSidepanelPerformance } from './useBootstrap';
+
+markSidepanelPerformance(SIDEPANEL_PERF_MARKS.bootstrapStart);
 
 createApp(App).mount('#app');
 
